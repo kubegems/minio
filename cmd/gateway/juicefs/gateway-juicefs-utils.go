@@ -17,23 +17,24 @@
 package juicefs
 
 import (
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"github.com/juicedata/juicefs/pkg/fs"
+	"go.uber.org/automaxprocs/maxprocs"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/erikdubbelboer/gspt"
-	"github.com/google/gops/agent"
 	"github.com/juicedata/juicefs/pkg/chunk"
 	"github.com/juicedata/juicefs/pkg/meta"
 	"github.com/juicedata/juicefs/pkg/metric"
@@ -150,8 +151,10 @@ func exposeMetrics(c *cli.Context, m meta.Meta, registerer prometheus.Registerer
 }
 func initBackgroundTasks(c *cli.Context, vfsConf *vfs.Config, metaConf *meta.Config, m meta.Meta, blob object.ObjectStorage, registerer prometheus.Registerer, registry *prometheus.Registry) {
 	metricsAddr := exposeMetrics(c, m, registerer, registry)
+	vfsConf.Port.PrometheusAgent = metricsAddr
 	if c.IsSet("consul") {
 		metric.RegisterToConsul(c.String("consul"), metricsAddr, vfsConf.Meta.MountPoint)
+		vfsConf.Port.ConsulAddr = c.String("consul")
 	}
 	if !metaConf.ReadOnly && !metaConf.NoBGJob && vfsConf.BackupMeta > 0 {
 		go vfs.Backup(m, blob, vfsConf.BackupMeta)
@@ -184,34 +187,22 @@ func getChunkConf(c *cli.Context, format *meta.Format) *chunk.Config {
 		DownloadLimit: c.Int64("download-limit") * 1e6 / 8,
 		UploadDelay:   duration(c.String("upload-delay")),
 
-		CacheDir:       c.String("cache-dir"),
-		CacheSize:      int64(c.Int("cache-size")),
-		FreeSpace:      float32(c.Float64("free-space-ratio")),
-		CacheMode:      os.FileMode(cm),
-		CacheFullBlock: !c.Bool("cache-partial-only"),
-		AutoCreate:     true,
+		CacheDir:          c.String("cache-dir"),
+		CacheSize:         int64(c.Int("cache-size")),
+		FreeSpace:         float32(c.Float64("free-space-ratio")),
+		CacheMode:         os.FileMode(cm),
+		CacheFullBlock:    !c.Bool("cache-partial-only"),
+		CacheChecksum:     c.String("verify-cache-checksum"),
+		CacheScanInterval: duration(c.String("cache-scan-interval")),
+		AutoCreate:        true,
 	}
-	if chunkConf.MaxUpload <= 0 {
-		logger.Warnf("max-uploads should be greater than 0, set it to 1")
-		chunkConf.MaxUpload = 1
-	}
-	if chunkConf.BufferSize <= 32<<20 {
-		logger.Warnf("buffer-size should be more than 32 MiB")
-		chunkConf.BufferSize = 32 << 20
-	}
-
-	if chunkConf.CacheDir != "memory" {
-		ds := utils.SplitDir(chunkConf.CacheDir)
-		for i := range ds {
-			ds[i] = filepath.Join(ds[i], format.UUID)
-		}
-		chunkConf.CacheDir = strings.Join(ds, string(os.PathListSeparator))
-	}
+	chunkConf.SelfCheck(format.UUID)
 	return chunkConf
 }
 
 type storageHolder struct {
 	object.ObjectStorage
+	fmt meta.Format
 }
 
 func createStorage(format meta.Format) (object.ObjectStorage, error) {
@@ -221,23 +212,20 @@ func createStorage(format meta.Format) (object.ObjectStorage, error) {
 	object.UserAgent = "JuiceFS-" + version.Version()
 	var blob object.ObjectStorage
 	var err error
-	var query string
-	if p := strings.Index(format.Bucket, "?"); p > 0 && p+1 < len(format.Bucket) {
-		query = format.Bucket[p+1:]
-		format.Bucket = format.Bucket[:p]
-		logger.Debugf("query string: %s", query)
-	}
-	if query != "" {
-		values, err := url.ParseQuery(query)
-		if err != nil {
-			return nil, err
+	if u, err := url.Parse(format.Bucket); err == nil {
+		values := u.Query()
+		if values.Get("tls-insecure-skip-verify") != "" {
+			var tlsSkipVerify bool
+			if tlsSkipVerify, err = strconv.ParseBool(values.Get("tls-insecure-skip-verify")); err != nil {
+				return nil, err
+			}
+			object.GetHttpClient().Transport.(*http.Transport).TLSClientConfig.InsecureSkipVerify = tlsSkipVerify
+			values.Del("tls-insecure-skip-verify")
+			u.RawQuery = values.Encode()
+			format.Bucket = u.String()
 		}
-		var tlsSkipVerify bool
-		if tlsSkipVerify, err = strconv.ParseBool(values.Get("tls-insecure-skip-verify")); err != nil {
-			return nil, err
-		}
-		object.GetHttpClient().Transport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: tlsSkipVerify}
 	}
+
 	if format.Shards > 1 {
 		blob, err = object.NewSharded(strings.ToLower(format.Storage), format.Bucket, format.AccessKey, format.SecretKey, format.SessionToken, format.Shards)
 	} else {
@@ -262,57 +250,59 @@ func createStorage(format meta.Format) (object.ObjectStorage, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse rsa: %s", err)
 		}
-		encryptor := object.NewAESEncryptor(object.NewRSAEncryptor(privKey))
+		encryptor, err := object.NewDataEncryptor(object.NewRSAEncryptor(privKey), format.EncryptAlgo)
+		if err != nil {
+			return nil, err
+		}
 		blob = object.NewEncrypted(blob, encryptor)
 	}
 	return blob, nil
 }
 
-func NewReloadableStorage(format *meta.Format, reload func() (*meta.Format, error)) (object.ObjectStorage, error) {
+func NewReloadableStorage(format *meta.Format, cli meta.Meta, patch func(*meta.Format)) (object.ObjectStorage, error) {
+	if patch != nil {
+		patch(format)
+	}
 	blob, err := createStorage(*format)
 	if err != nil {
 		return nil, err
 	}
-	holder := &storageHolder{blob}
-	go func() {
-		old := *format // keep a copy, so it will not refreshed
-		for {
-			time.Sleep(time.Minute)
-			new, err := reload()
-			if err != nil {
-				logger.Warnf("reload config: %s", err)
-				continue
-			}
-			if new.Storage != old.Storage || new.Bucket != old.Bucket || new.AccessKey != old.AccessKey || new.SecretKey != old.SecretKey {
-				logger.Infof("found new configuration: storage=%s bucket=%s ak=%s", new.Storage, new.Bucket, new.AccessKey)
-				newBlob, err := createStorage(*new)
-				if err != nil {
-					logger.Warnf("object storage: %s", err)
-					continue
-				}
-				holder.ObjectStorage = newBlob
-				old = *new
-			}
+	holder := &storageHolder{
+		ObjectStorage: blob,
+		fmt:           *format, // keep a copy to find the change
+	}
+	cli.OnReload(func(new *meta.Format) {
+		if patch != nil {
+			patch(new)
 		}
-	}()
+		old := &holder.fmt
+		if new.Storage != old.Storage || new.Bucket != old.Bucket || new.AccessKey != old.AccessKey || new.SecretKey != old.SecretKey || new.SessionToken != old.SessionToken {
+			logger.Infof("found new configuration: storage=%s bucket=%s ak=%s", new.Storage, new.Bucket, new.AccessKey)
+
+			newBlob, err := createStorage(*new)
+			if err != nil {
+				logger.Warnf("object storage: %s", err)
+				return
+			}
+			holder.ObjectStorage = newBlob
+			holder.fmt = *new
+		}
+	})
 	return holder, nil
 }
 
-func getFormat(c *cli.Context, metaCli meta.Meta) (*meta.Format, error) {
-	format, err := metaCli.Load(true)
-	if err != nil {
-		return nil, fmt.Errorf("load setting: %s", err)
+func updateFormat(c *cli.Context) func(*meta.Format) {
+	return func(format *meta.Format) {
+		if c.IsSet("bucket") {
+			format.Bucket = c.String("bucket")
+		}
+		if c.IsSet("storage") {
+			format.Storage = c.String("storage")
+		}
 	}
-	if c.IsSet("bucket") {
-		format.Bucket = c.String("bucket")
-	}
-	if c.IsSet("storage") {
-		format.Storage = c.String("storage")
-	}
-	return format, nil
 }
 
-func initForSvc(c *cli.Context, mp string, metaUrl string) (meta.Meta, chunk.ChunkStore, *vfs.Config) {
+func initForSvc(c *cli.Context, mp string, metaUrl string) (*vfs.Config, *fs.FileSystem) {
 	removePassword(metaUrl)
 	metaConf := getMetaConf(c, mp, c.Bool("read-only"))
 	metaCli := meta.NewClient(metaUrl, metaConf)
@@ -320,14 +310,12 @@ func initForSvc(c *cli.Context, mp string, metaUrl string) (meta.Meta, chunk.Chu
 	if err != nil {
 		logger.Fatalf("load setting: %s", err)
 	}
-	registerer, registry := wrapRegister(mp, format.Name)
-	if !c.Bool("writeback") && c.IsSet("upload-delay") {
-		logger.Warnf("delayed upload only work in writeback mode")
+	if st := metaCli.Chroot(meta.Background, metaConf.Subdir); st != 0 {
+		logger.Fatalf("Chroot to %s: %s", metaConf.Subdir, st)
 	}
+	registerer, registry := wrapRegister(mp, format.Name)
 
-	blob, err := NewReloadableStorage(format, func() (*meta.Format, error) {
-		return getFormat(c, metaCli)
-	})
+	blob, err := NewReloadableStorage(format, metaCli, updateFormat(c))
 	if err != nil {
 		logger.Fatalf("object storage: %s", err)
 	}
@@ -341,7 +329,18 @@ func initForSvc(c *cli.Context, mp string, metaUrl string) (meta.Meta, chunk.Chu
 	if err != nil {
 		logger.Fatalf("new session: %s", err)
 	}
-
+	// Go will catch all the signals
+	signal.Ignore(syscall.SIGPIPE)
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	go func() {
+		sig := <-signalChan
+		logger.Infof("Received signal %s, exiting...", sig.String())
+		if err := metaCli.CloseSession(); err != nil {
+			logger.Fatalf("close session failed: %s", err)
+		}
+		os.Exit(0)
+	}()
 	vfsConf := getVfsConf(c, metaConf, format, chunkConf)
 	vfsConf.AccessLog = c.String("access-log")
 	vfsConf.AttrTimeout = time.Millisecond * time.Duration(c.Float64("attr-cache")*1000)
@@ -349,8 +348,13 @@ func initForSvc(c *cli.Context, mp string, metaUrl string) (meta.Meta, chunk.Chu
 	vfsConf.DirEntryTimeout = time.Millisecond * time.Duration(c.Float64("dir-entry-cache")*1000)
 
 	initBackgroundTasks(c, vfsConf, metaConf, metaCli, blob, registerer, registry)
+	jfs, err := fs.NewFileSystem(vfsConf, metaCli, store)
+	if err != nil {
+		logger.Fatalf("Initialize failed: %s", err)
+	}
+	jfs.InitMetrics(registerer)
 
-	return metaCli, store, vfsConf
+	return vfsConf, jfs
 }
 
 func getVfsConf(c *cli.Context, metaConf *meta.Config, format *meta.Format, chunkConf *chunk.Config) *vfs.Config {
@@ -360,6 +364,7 @@ func getVfsConf(c *cli.Context, metaConf *meta.Config, format *meta.Format, chun
 		Version:    version.Version(),
 		Chunk:      chunkConf,
 		BackupMeta: duration(c.String("backup-meta")),
+		Port:       &vfs.Port{DebugAgent: debugAgent, PyroscopeAddr: c.String("pyroscope")},
 	}
 	if cfg.BackupMeta > 0 && cfg.BackupMeta < time.Minute*5 {
 		logger.Fatalf("backup-meta should not be less than 5 minutes: %s", cfg.BackupMeta)
@@ -393,6 +398,8 @@ func removePassword(uri string) {
 	gspt.SetProcTitle(strings.Join(os.Args, " "))
 }
 
+var debugAgent string
+
 func setup(c *cli.Context, n int) {
 	if c.NArg() < n {
 		fmt.Printf("ERROR: This command requires at least %d arguments\n", n)
@@ -412,16 +419,16 @@ func setup(c *cli.Context, n int) {
 	if c.Bool("no-color") {
 		utils.DisableLogColor()
 	}
+	// set the correct value when it runs inside container
+	if undo, err := maxprocs.Set(maxprocs.Logger(logger.Debugf)); err != nil {
+		undo()
+	}
 
 	if !c.Bool("no-agent") {
 		go func() {
 			for port := 6060; port < 6100; port++ {
-				_ = http.ListenAndServe(fmt.Sprintf("127.0.0.1:%d", port), nil)
-			}
-		}()
-		go func() {
-			for port := 6070; port < 6100; port++ {
-				_ = agent.Listen(agent.Options{Addr: fmt.Sprintf("127.0.0.1:%d", port)})
+				debugAgent = fmt.Sprintf("127.0.0.1:%d", port)
+				_ = http.ListenAndServe(debugAgent, nil)
 			}
 		}()
 	}
@@ -464,7 +471,7 @@ func globalFlags() []cli.Flag {
 		},
 		&cli.BoolFlag{
 			Name:  "no-agent",
-			Usage: "disable pprof (:6060) and gops (:6070) agent",
+			Usage: "disable pprof (:6060) agent",
 		},
 		&cli.StringFlag{
 			Name:  "pyroscope",
@@ -572,7 +579,7 @@ func clientFlags() []cli.Flag {
 		&cli.IntFlag{
 			Name:  "cache-size",
 			Value: 100 << 10,
-			Usage: "size of cached objects in MiB",
+			Usage: "size of cached object for read in MiB",
 		},
 		&cli.Float64Flag{
 			Name:  "free-space-ratio",
@@ -582,6 +589,16 @@ func clientFlags() []cli.Flag {
 		&cli.BoolFlag{
 			Name:  "cache-partial-only",
 			Usage: "cache only random/small read",
+		},
+		&cli.StringFlag{
+			Name:  "verify-cache-checksum",
+			Value: "full",
+			Usage: "checksum level (none, full, shrink, extend)",
+		},
+		&cli.StringFlag{
+			Name:  "cache-scan-interval",
+			Value: "3600",
+			Usage: "interval (in seconds) to scan cache-dir to rebuild in-memory index",
 		},
 		&cli.StringFlag{
 			Name:  "backup-meta",

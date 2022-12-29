@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - gateway
+      - main
 
 jobs:
   gateway-juicefs-test:
