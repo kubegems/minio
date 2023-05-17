@@ -1,4 +1,4 @@
-FROM minio/minio:latest
+FROM alpine:latest
 
 ENV PATH=/opt/bin:$PATH
 

@@ -1,6 +1,6 @@
 PWD := $(shell pwd)
 GOPATH := $(shell go env GOPATH)
-LDFLAGS := $(shell go run buildscripts/gen-ldflags.go)
+LDFLAGS := $(shell go run buildscripts/gen-ldflags.go) -linkmode 'external' -extldflags '-static'
 
 GOARCH := $(shell go env GOARCH)
 GOOS := $(shell go env GOOS)
@@ -119,7 +119,7 @@ docker-hotfix: hotfix-push checks ## builds minio docker container with hotfix t
 
 docker: build checks ## builds minio docker container
 	@echo "Building minio docker image '$(TAG)'"
-	@docker build -q --no-cache -t $(TAG) . -f Dockerfile
+	docker build --no-cache -t $(TAG) . -f Dockerfile --load
 
 install: build ## builds minio and installs it to $GOPATH/bin.
 	@echo "Installing minio binary to '$(GOPATH)/bin/minio'"
