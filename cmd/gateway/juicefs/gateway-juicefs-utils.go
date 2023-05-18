@@ -17,6 +17,7 @@
 package juicefs
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -35,6 +36,7 @@ import (
 	"github.com/erikdubbelboer/gspt"
 	"github.com/google/gops/agent"
 	"github.com/juicedata/juicefs/pkg/chunk"
+	"github.com/juicedata/juicefs/pkg/fs" //nolint:gofumpt
 	"github.com/juicedata/juicefs/pkg/meta"
 	"github.com/juicedata/juicefs/pkg/metric"
 	"github.com/juicedata/juicefs/pkg/object"
@@ -43,6 +45,7 @@ import (
 	"github.com/juicedata/juicefs/pkg/version"
 	"github.com/juicedata/juicefs/pkg/vfs"
 	"github.com/minio/cli"
+	minio "github.com/minio/minio/cmd"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -50,8 +53,24 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+type _bucketMetrics struct {
+	existed    bool
+	usedSpaceG prometheus.Gauge
+	usedFilesG prometheus.Gauge
+}
+
+type bucketMetrics struct {
+	_metrics map[string]*_bucketMetrics
+}
+
+var _jfs *fs.FileSystem
+var _cfg *vfs.Config
+var _ctx = context.Background()
+var _mctx = meta.NewContext(uint32(os.Getpid()), uint32(os.Getuid()), []uint32{uint32(os.Getgid())})
+var _mb = &bucketMetrics{_metrics: make(map[string]*_bucketMetrics)}
+
 func getMetaConf(c *cli.Context, mp string, readOnly bool) *meta.Config {
-	cfg := &meta.Config{
+	_cfg := &meta.Config{
 		Retries:    c.Int("io-retries"),
 		Strict:     true,
 		MaxDeletes: c.Int("max-deletes"),
@@ -62,18 +81,18 @@ func getMetaConf(c *cli.Context, mp string, readOnly bool) *meta.Config {
 		MountPoint: mp,
 		Subdir:     c.String("subdir"),
 	}
-	if cfg.MaxDeletes == 0 {
+	if _cfg.MaxDeletes == 0 {
 		logger.Warnf("Deleting object will be disabled since max-deletes is 0")
 	}
-	if cfg.Heartbeat < time.Second {
+	if _cfg.Heartbeat < time.Second {
 		logger.Warnf("heartbeat should not be less than 1 second")
-		cfg.Heartbeat = time.Second
+		_cfg.Heartbeat = time.Second
 	}
-	if cfg.Heartbeat > time.Minute*10 {
+	if _cfg.Heartbeat > time.Minute*10 {
 		logger.Warnf("heartbeat shouldd not be greater than 10 minutes")
-		cfg.Heartbeat = time.Minute * 10
+		_cfg.Heartbeat = time.Minute * 10
 	}
-	return cfg
+	return _cfg
 }
 
 func duration(s string) time.Duration {
@@ -102,7 +121,7 @@ func exposeMetrics(c *cli.Context, m meta.Meta, registerer prometheus.Registerer
 	if err != nil {
 		logger.Fatalf("metrics format error: %v", err)
 	}
-
+	initBucketMetrics(registerer)
 	m.InitMetrics(registerer)
 	vfs.InitMetrics(registerer)
 	go metric.UpdateMetrics(m, registerer)
@@ -345,29 +364,34 @@ func initForSvc(c *cli.Context, mp string, metaUrl string) (meta.Meta, chunk.Chu
 		logger.Fatalf("new session: %s", err)
 	}
 
-	vfsConf := getVfsConf(c, metaConf, format, chunkConf)
-	vfsConf.AccessLog = c.String("access-log")
-	vfsConf.AttrTimeout = time.Millisecond * time.Duration(c.Float64("attr-cache")*1000)
-	vfsConf.EntryTimeout = time.Millisecond * time.Duration(c.Float64("entry-cache")*1000)
-	vfsConf.DirEntryTimeout = time.Millisecond * time.Duration(c.Float64("dir-entry-cache")*1000)
+	_cfg = getVfsConf(c, metaConf, format, chunkConf)
+	_cfg.AccessLog = c.String("access-log")
+	_cfg.AttrTimeout = time.Millisecond * time.Duration(c.Float64("attr-cache")*1000)
+	_cfg.EntryTimeout = time.Millisecond * time.Duration(c.Float64("entry-cache")*1000)
+	_cfg.DirEntryTimeout = time.Millisecond * time.Duration(c.Float64("dir-entry-cache")*1000)
 
-	initBackgroundTasks(c, vfsConf, metaConf, metaCli, blob, registerer, registry)
+	_jfs, err = fs.NewFileSystem(_cfg, metaCli, store)
+	if err != nil {
+		panic(fmt.Errorf("initialize failed: %s", err))
+	}
 
-	return metaCli, store, vfsConf
+	initBackgroundTasks(c, _cfg, metaConf, metaCli, blob, registerer, registry)
+
+	return metaCli, store, _cfg
 }
 
 func getVfsConf(c *cli.Context, metaConf *meta.Config, format *meta.Format, chunkConf *chunk.Config) *vfs.Config {
-	cfg := &vfs.Config{
+	_cfg := &vfs.Config{
 		Meta:       metaConf,
 		Format:     format,
 		Version:    version.Version(),
 		Chunk:      chunkConf,
 		BackupMeta: duration(c.String("backup-meta")),
 	}
-	if cfg.BackupMeta > 0 && cfg.BackupMeta < time.Minute*5 {
-		logger.Fatalf("backup-meta should not be less than 5 minutes: %s", cfg.BackupMeta)
+	if _cfg.BackupMeta > 0 && _cfg.BackupMeta < time.Minute*5 {
+		logger.Fatalf("backup-meta should not be less than 5 minutes: %s", _cfg.BackupMeta)
 	}
-	return cfg
+	return _cfg
 }
 func registerMetaMsg(m meta.Meta, store chunk.ChunkStore, chunkConf *chunk.Config) {
 	m.OnMsg(meta.DeleteSlice, func(args ...interface{}) error {
@@ -656,4 +680,91 @@ func expandFlags(compoundFlags [][]cli.Flag) []cli.Flag {
 		flags = append(flags, flag...)
 	}
 	return flags
+}
+
+func bucketPath(p ...string) string {
+	if len(p) > 0 && p[0] == _cfg.Format.Name {
+		p = p[1:]
+	}
+	return sep + minio.PathJoin(p...)
+}
+
+func bucketSummary(p string) (s *meta.Summary, err error) {
+	s = &meta.Summary{}
+	f, eno := _jfs.Open(_mctx, p, 0)
+	if eno != 0 {
+		err = jfsToObjectErr(_ctx, eno)
+		logger.Errorf("open bucketPath error: %s path: %s\n", err, p)
+		return
+	}
+	defer f.Close(_mctx)
+	s, eno = f.Summary(_mctx)
+	if eno != 0 {
+		logger.Errorf("summary bucketPath error: %s path: %s\n", err, p)
+		err = jfsToObjectErr(_ctx, eno)
+	}
+	return
+}
+
+func initBucket(reg prometheus.Registerer) {
+	fdir, eno := _jfs.Open(_mctx, sep, 0)
+	if eno != 0 {
+		err := jfsToObjectErr(_ctx, eno)
+		logger.Errorf("open bucket error: %s\n", err)
+		return
+	}
+	defer fdir.Close(_mctx)
+	entries, eno := fdir.Readdir(_mctx, 10000)
+	if eno != 0 {
+		err := jfsToObjectErr(_ctx, eno)
+		logger.Errorf("list bucketPath error: %s\n", err)
+		return
+	}
+	for k, _ := range _mb._metrics {
+		_mb._metrics[k].existed = false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.Contains(entry.Name(), "sys") {
+			if _, ok := _mb._metrics[entry.Name()]; !ok {
+				lb := make(map[string]string)
+				lb["bucket"] = entry.Name()
+				_mb._metrics[entry.Name()] = &_bucketMetrics{
+					existed: true,
+					usedSpaceG: prometheus.NewGauge(prometheus.GaugeOpts{
+						Name:        "total_bytes",
+						ConstLabels: lb,
+					}),
+					usedFilesG: prometheus.NewGauge(prometheus.GaugeOpts{
+						Name:        "total_files",
+						ConstLabels: lb,
+					}),
+				}
+				reg.Register(_mb._metrics[entry.Name()].usedFilesG)
+				reg.Register(_mb._metrics[entry.Name()].usedSpaceG)
+			}
+			p := bucketPath(_cfg.Format.Name, entry.Name())
+			s, err := bucketSummary(p)
+			if err != nil {
+				continue
+			}
+			_mb._metrics[entry.Name()].existed = true
+			_mb._metrics[entry.Name()].usedSpaceG.Set(float64(s.Size))
+			_mb._metrics[entry.Name()].usedFilesG.Set(float64(s.Files))
+		}
+	}
+	for k, _ := range _mb._metrics {
+		if !_mb._metrics[k].existed {
+			reg.Unregister(_mb._metrics[k].usedFilesG)
+			reg.Unregister(_mb._metrics[k].usedSpaceG)
+		}
+	}
+	utils.SleepWithJitter(time.Second * 5)
+}
+
+func initBucketMetrics(reg prometheus.Registerer) {
+	go func() {
+		for {
+			initBucket(reg)
+		}
+	}()
 }
