@@ -283,7 +283,7 @@ func (n *JfsObjects) MakeBucketWithLocation(ctx context.Context, bucket string, 
 	if !n.gConf.MultiBucket {
 		return nil
 	}
-	eno := n.fs.Mkdir(mctx, n.path(bucket), n.gConf.DirMode)
+	eno := n.fs.Mkdir(mctx, n.path(bucket), 0777,  n.gConf.DirMode)
 	return jfsToObjectErr(ctx, eno, bucket)
 }
 
@@ -542,7 +542,7 @@ func (n *JfsObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBu
 	}
 	tmp := n.tpath(dstBucket, "tmp", minio.MustGetUUID())
 	_ = n.mkdirAll(ctx, path.Dir(tmp), os.FileMode(n.gConf.DirMode))
-	f, eno := n.fs.Create(mctx, tmp, n.gConf.Mode)
+	f, eno := n.fs.Create(mctx, tmp, 0666, n.gConf.Mode)
 	if eno != 0 {
 		logger.Errorf("create %s: %s", tmp, eno)
 		return
@@ -675,12 +675,12 @@ func (n *JfsObjects) mkdirAll(ctx context.Context, p string, mode os.FileMode) e
 		}
 		return nil
 	}
-	eno := n.fs.Mkdir(mctx, p, uint16(mode))
+	eno := n.fs.Mkdir(mctx, p, 0777, uint16(mode))
 	if eno != 0 && fs.IsNotExist(eno) {
 		if err := n.mkdirAll(ctx, path.Dir(p), os.FileMode(n.gConf.DirMode)); err != nil {
 			return err
 		}
-		eno = n.fs.Mkdir(mctx, p, uint16(mode))
+		eno = n.fs.Mkdir(mctx, p, 0777, uint16(mode))
 	}
 	if eno != 0 && fs.IsExist(eno) {
 		eno = 0
@@ -694,7 +694,7 @@ func (n *JfsObjects) mkdirAll(ctx context.Context, p string, mode os.FileMode) e
 func (n *JfsObjects) putObject(ctx context.Context, bucket, object string, r *minio.PutObjReader, opts minio.ObjectOptions) (err error) {
 	tmpname := n.tpath(bucket, "tmp", minio.MustGetUUID())
 	_ = n.mkdirAll(ctx, path.Dir(tmpname), os.FileMode(n.gConf.DirMode))
-	f, eno := n.fs.Create(mctx, tmpname, n.gConf.Mode)
+	f, eno := n.fs.Create(mctx, tmpname, 0666, n.gConf.Mode)
 	if eno != 0 {
 		logger.Errorf("create %s: %s", tmpname, eno)
 		err = eno
@@ -945,7 +945,7 @@ func (n *JfsObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 
 	tmp := n.ppath(bucket, uploadID, "complete")
 	_ = n.fs.Delete(mctx, tmp)
-	f, eno := n.fs.Create(mctx, tmp, n.gConf.Mode)
+	f, eno := n.fs.Create(mctx, tmp, 0666, n.gConf.Mode)
 	if eno != 0 {
 		err = jfsToObjectErr(ctx, eno, bucket, object, uploadID)
 		logger.Errorf("create complete: %s", err)
