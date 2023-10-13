@@ -104,6 +104,7 @@ func exposeMetrics(c *cli.Context, m meta.Meta, registerer prometheus.Registerer
 	}
 
 	m.InitMetrics(registerer)
+	InitMuiltiBucketMetrics(c, registerer, m)
 	vfs.InitMetrics(registerer)
 	go metric.UpdateMetrics(m, registerer)
 	http.Handle("/metrics", promhttp.HandlerFor(
