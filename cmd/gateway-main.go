@@ -31,7 +31,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/minio/cli"
 	"github.com/minio/madmin-go"
-	"github.com/minio/minio/internal/color"
 	xhttp "github.com/minio/minio/internal/http"
 	"github.com/minio/minio/internal/logger"
 	"github.com/minio/pkg/certs"
@@ -304,7 +303,7 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 	globalObjectAPI = newObject
 	globalObjLayerMutex.Unlock()
 
-	go globalIAMSys.Init(GlobalContext, newObject, globalEtcdClient, globalRefreshIAMInterval)
+	go globalIAMSys.Init(GlobalContext, newObject, globalEtcdClient, GlobalRedisClient, globalRefreshIAMInterval)
 
 	if gatewayName == NASBackendGateway {
 		buckets, err := newObject.ListBuckets(GlobalContext)
@@ -375,16 +374,6 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 		}
 		logger.Info("======")
 	}
-
-	// TODO: remove the following line by June 1st.
-	logger.Info(
-		color.RedBold(`
-===================================================================================
-**** WARNING: MinIO Gateway will be removed by June 1st from MinIO repository *****
-
-Please read https://github.com/minio/minio/issues/14331
-===================================================================================
-`))
 
 	<-globalOSSignalCh
 }

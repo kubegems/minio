@@ -32,6 +32,7 @@ import (
 	"github.com/minio/minio/internal/config"
 	"github.com/minio/minio/internal/handlers"
 	"github.com/minio/minio/internal/kms"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/dnscache"
 
 	"github.com/dustin/go-humanize"
@@ -261,6 +262,9 @@ var (
 
 	// Allocated etcd endpoint for config and bucket DNS.
 	globalEtcdClient *etcd.Client
+
+	// Redis to save iam information
+	GlobalRedisClient redis.UniversalClient
 
 	// Cluster replication manager.
 	globalSiteReplicationSys SiteReplicationSys

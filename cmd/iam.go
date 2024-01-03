@@ -39,6 +39,7 @@ import (
 	"github.com/minio/minio/internal/color"
 	"github.com/minio/minio/internal/logger"
 	iampolicy "github.com/minio/pkg/iam/policy"
+	"github.com/redis/go-redis/v9"
 	etcd "go.etcd.io/etcd/client/v3"
 )
 
@@ -149,18 +150,21 @@ func (sys *IAMSys) doIAMConfigMigration(ctx context.Context) error {
 }
 
 // initStore initializes IAM stores
-func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client) {
+func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client, redisClient redis.UniversalClient) {
 	if globalLDAPConfig.Enabled {
 		sys.EnableLDAPSys()
 	}
-
+	//还是优先使用etcd作为IAM的存储
 	if etcdClient == nil {
 		if globalIsGateway {
 			if globalGatewayName == NASBackendGateway {
 				sys.store = &IAMStoreSys{newIAMObjectStore(objAPI, sys.usersSysType)}
+			} else if redisClient != nil {
+				sys.store = &IAMStoreSys{newIAMRedisStore(redisClient, sys.usersSysType)}
+				logger.Info("INFO: %s gateway is running redis IAM store", globalGatewayName)
 			} else {
 				sys.store = &IAMStoreSys{newIAMDummyStore(sys.usersSysType)}
-				logger.Info("WARNING: %s gateway is running in-memory IAM store, for persistence please configure etcd",
+				logger.Info("WARNING: %s gateway is running in-memory IAM store, for persistence please configure etcd or redis",
 					globalGatewayName)
 			}
 		} else {
@@ -197,14 +201,14 @@ func (sys *IAMSys) Load(ctx context.Context) error {
 }
 
 // Init - initializes config system by reading entries from config/iam
-func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etcd.Client, iamRefreshInterval time.Duration) {
+func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etcd.Client, redisClient redis.UniversalClient, iamRefreshInterval time.Duration) {
 	sys.Lock()
 	defer sys.Unlock()
 
 	sys.iamRefreshInterval = iamRefreshInterval
 
 	// Initialize IAM store
-	sys.initStore(objAPI, etcdClient)
+	sys.initStore(objAPI, etcdClient, redisClient)
 
 	retryCtx, cancel := context.WithCancel(ctx)
 
@@ -252,16 +256,16 @@ func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etc
 		}
 
 		// Migrate IAM configuration, if necessary.
-		if err := sys.doIAMConfigMigration(retryCtx); err != nil {
-			txnLk.Unlock(lkctx.Cancel)
-			if configRetriableErrors(err) {
-				logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. possible cause (%v)", err)
-				continue
-			}
-			logger.LogIf(ctx, fmt.Errorf("Unable to migrate IAM users and policies to new format: %w", err))
-			logger.LogIf(ctx, errors.New("IAM sub-system is partially initialized, some users may not be available"))
-			return
-		}
+		// if err := sys.doIAMConfigMigration(retryCtx); err != nil {
+		// 	txnLk.Unlock(lkctx.Cancel)
+		// 	if configRetriableErrors(err) {
+		// 		logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. possible cause (%v)", err)
+		// 		continue
+		// 	}
+		// 	logger.LogIf(ctx, fmt.Errorf("Unable to migrate IAM users and policies to new format: %w", err))
+		// 	logger.LogIf(ctx, errors.New("IAM sub-system is partially initialized, some users may not be available"))
+		// 	return
+		// }
 
 		// Successfully migrated, proceed to load the users.
 		txnLk.Unlock(lkctx.Cancel)

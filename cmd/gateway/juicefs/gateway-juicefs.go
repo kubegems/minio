@@ -19,16 +19,9 @@ package juicefs
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/juicedata/juicefs/pkg/fs" //nolint:gofumpt
-	"github.com/juicedata/juicefs/pkg/meta"
-	"github.com/juicedata/juicefs/pkg/utils"
-	"github.com/juicedata/juicefs/pkg/version"
-	"github.com/minio/cli"
-	"github.com/minio/madmin-go"
-	minio "github.com/minio/minio/cmd"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"sort"
@@ -37,6 +30,16 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/juicedata/juicefs/pkg/fs" //nolint:gofumpt
+	"github.com/juicedata/juicefs/pkg/meta"
+	"github.com/juicedata/juicefs/pkg/utils"
+	"github.com/juicedata/juicefs/pkg/version"
+	"github.com/minio/cli"
+	"github.com/minio/madmin-go"
+	minio "github.com/minio/minio/cmd"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/juicedata/juicefs/pkg/vfs"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
@@ -142,10 +145,40 @@ func (n *JfsObjects) Name() string {
 	return minio.JuiceFSGateway
 }
 
+func initIAMStore(addr string) {
+	p := strings.Index(addr, "://")
+	if p < 0 {
+		logger.Fatalf("invalid uri: %s", addr)
+	}
+	driverType := addr[:p]
+	switch driverType {
+	case "redis":
+		u, err := url.Parse(addr)
+		if err != nil {
+			logger.Fatalf("url parse %s: %s", addr, err)
+		}
+		opt, err := redis.ParseURL(u.String())
+		if err != nil {
+			logger.Fatalf("redis parse %s: %s", addr, err)
+		}
+		opt.MinRetryBackoff = time.Millisecond * 20
+		opt.MaxRetryBackoff = time.Second * 10
+		opt.ReadTimeout = time.Second * 30
+		opt.WriteTimeout = time.Second * 5
+		//opt.MaxRetries = -1 // Redis use -1 to disable retries
+		opt.MaxRetries = 10
+		minio.GlobalRedisClient = redis.NewClient(opt)
+	default:
+		logger.Infof("current not support %s,use memory IAM store", driverType)
+	}
+}
+
 func (n *JfsObjects) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLayer, error) {
 	setup(n.ctx, 1)
 	addr := n.ctx.Args().Get(0)
 	removePassword(addr)
+	//初始化IAM存储引擎
+	initIAMStore(addr)
 	m, store, conf := initForSvc(n.ctx, "s3gateway", addr)
 
 	jfs, err := fs.NewFileSystem(conf, m, store)
@@ -283,7 +316,7 @@ func (n *JfsObjects) MakeBucketWithLocation(ctx context.Context, bucket string, 
 	if !n.gConf.MultiBucket {
 		return nil
 	}
-	eno := n.fs.Mkdir(mctx, n.path(bucket), 0777,  n.gConf.DirMode)
+	eno := n.fs.Mkdir(mctx, n.path(bucket), 0777, n.gConf.DirMode)
 	return jfsToObjectErr(ctx, eno, bucket)
 }
 
