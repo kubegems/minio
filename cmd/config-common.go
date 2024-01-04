@@ -21,7 +21,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io/ioutil"
+	"io"
 	"net/http"
 
 	"github.com/minio/minio/internal/hash"
@@ -29,7 +29,7 @@ import (
 
 var errConfigNotFound = errors.New("config file not found")
 
-func readConfigWithMetadata(ctx context.Context, store objectIO, configFile string) ([]byte, ObjectInfo, error) {
+func readConfigWithMetadata(ctx context.Context, store ObjectIO, configFile string) ([]byte, ObjectInfo, error) {
 	r, err := store.GetObjectNInfo(ctx, minioMetaBucket, configFile, nil, http.Header{}, readLock, ObjectOptions{})
 	if err != nil {
 		// Treat object not found as config not found.
@@ -41,7 +41,7 @@ func readConfigWithMetadata(ctx context.Context, store objectIO, configFile stri
 	}
 	defer r.Close()
 
-	buf, err := ioutil.ReadAll(r)
+	buf, err := io.ReadAll(r)
 	if err != nil {
 		return nil, ObjectInfo{}, err
 	}
@@ -51,16 +51,12 @@ func readConfigWithMetadata(ctx context.Context, store objectIO, configFile stri
 	return buf, r.ObjInfo, nil
 }
 
-func readConfig(ctx context.Context, store objectIO, configFile string) ([]byte, error) {
+func readConfig(ctx context.Context, store ObjectIO, configFile string) ([]byte, error) {
 	buf, _, err := readConfigWithMetadata(ctx, store, configFile)
 	return buf, err
 }
 
-type objectDeleter interface {
-	DeleteObject(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error)
-}
-
-func deleteConfig(ctx context.Context, objAPI objectDeleter, configFile string) error {
+func deleteConfig(ctx context.Context, objAPI ObjectIO, configFile string) error {
 	_, err := objAPI.DeleteObject(ctx, minioMetaBucket, configFile, ObjectOptions{
 		DeletePrefix: true,
 	})
@@ -70,7 +66,7 @@ func deleteConfig(ctx context.Context, objAPI objectDeleter, configFile string) 
 	return err
 }
 
-func saveConfig(ctx context.Context, store objectIO, configFile string, data []byte) error {
+func saveConfig(ctx context.Context, store ObjectIO, configFile string, data []byte) error {
 	hashReader, err := hash.NewReader(bytes.NewReader(data), int64(len(data)), "", getSHA256Hash(data), int64(len(data)))
 	if err != nil {
 		return err

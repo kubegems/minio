@@ -54,7 +54,8 @@ func storeDataUsageInBackend(ctx context.Context, objAPI ObjectLayer, dui <-chan
 }
 
 // loadPrefixUsageFromBackend returns prefix usages found in passed buckets
-//   e.g.:  /testbucket/prefix => 355601334
+//
+//	e.g.:  /testbucket/prefix => 355601334
 func loadPrefixUsageFromBackend(ctx context.Context, objAPI ObjectLayer, bucket string) (map[string]uint64, error) {
 	z, ok := objAPI.(*erasureServerPools)
 	if !ok {
@@ -89,7 +90,7 @@ func loadPrefixUsageFromBackend(ctx context.Context, objAPI ObjectLayer, bucket 
 }
 
 func loadDataUsageFromBackend(ctx context.Context, objAPI ObjectLayer) (DataUsageInfo, error) {
-	buf, err := readConfig(ctx, objAPI, dataUsageObjNamePath)
+	buf, err := readConfig(ctx, objAPI.GetMetaStore(), dataUsageObjNamePath)
 	if err != nil {
 		if errors.Is(err, errConfigNotFound) {
 			return DataUsageInfo{}, nil

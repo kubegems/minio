@@ -149,6 +149,10 @@ func (z *erasureServerPools) NewNSLock(bucket string, objects ...string) RWLocke
 	return z.serverPools[0].NewNSLock(bucket, objects...)
 }
 
+func (z *erasureServerPools) GetMetaStore() ObjectIO {
+	return z
+}
+
 // GetDisksID will return disks by their ID.
 func (z *erasureServerPools) GetDisksID(ids ...string) []StorageAPI {
 	idMap := make(map[string]struct{})

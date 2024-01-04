@@ -874,15 +874,16 @@ func (d *dataUsageCache) merge(other dataUsageCache) {
 	}
 }
 
-type objectIO interface {
+type ObjectIO interface {
 	GetObjectNInfo(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (reader *GetObjectReader, err error)
 	PutObject(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error)
+	DeleteObject(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error)
 }
 
 // load the cache content with name from minioMetaBackgroundOpsBucket.
 // Only backend errors are returned as errors.
 // If the object is not found or unable to deserialize d is cleared and nil error is returned.
-func (d *dataUsageCache) load(ctx context.Context, store objectIO, name string) error {
+func (d *dataUsageCache) load(ctx context.Context, store ObjectIO, name string) error {
 	// Abandon if more than 5 minutes, so we don't hold up scanner.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -909,7 +910,7 @@ func (d *dataUsageCache) load(ctx context.Context, store objectIO, name string) 
 }
 
 // save the content of the cache to minioMetaBackgroundOpsBucket with the provided name.
-func (d *dataUsageCache) save(ctx context.Context, store objectIO, name string) error {
+func (d *dataUsageCache) save(ctx context.Context, store ObjectIO, name string) error {
 	pr, pw := io.Pipe()
 	go func() {
 		pw.CloseWithError(d.serializeTo(pw))

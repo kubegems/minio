@@ -222,6 +222,10 @@ func (g *HDFS) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLayer, err
 	return &hdfsObjects{clnt: clnt, subPath: commonPath, listPool: minio.NewTreeWalkPool(time.Minute * 30)}, nil
 }
 
+func (n *hdfsObjects) GetMetaStore() minio.ObjectIO {
+	return n
+}
+
 func (n *hdfsObjects) Shutdown(ctx context.Context) error {
 	return n.clnt.Close()
 }

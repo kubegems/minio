@@ -1,40 +1,57 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ kvStore = (*tikvStore)(nil)
-var _ kvStore = (*redisStore)(nil)
+var _ KvStore = (*TikvStore)(nil)
+var _ KvStore = (*RedisStore)(nil)
 
 type kv struct {
 	key   string
 	value []byte
 }
-type kvStore interface {
-	saveKeyKVWithTTL(ctx context.Context, key string, data []byte, ttl int64) error
-	saveKeyKV(ctx context.Context, key string, data []byte, opts ...options) error
-	deleteKeyKV(ctx context.Context, key string) error
-	readKeyKV(ctx context.Context, key string) ([]byte, error)
-	keysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error)
+type KvStore interface {
+	ObjectIO
+	SaveKeyKVWithTTL(ctx context.Context, key string, data []byte, ttl int64) error
+	SaveKeyKV(ctx context.Context, key string, data []byte, opts ...options) error
+	DeleteKeyKV(ctx context.Context, key string) error
+	ReadKeyKV(ctx context.Context, key string) ([]byte, error)
+	KeysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error)
 }
 
-type tikvStore struct {
-	client *tikv.KVStore
+type TikvStore struct {
+	nsMutex *nsLockMap
+	client  *tikv.KVStore
 }
 
 func RegisterTikvStore(client *tikv.KVStore) {
-	globalKVClient = &tikvStore{
-		client: client,
+	GlobalKVClient = &TikvStore{
+		client:  client,
+		nsMutex: newNSLock(false),
 	}
 }
 
-func (t *tikvStore) txn(ctx context.Context, f func(*tikv.KVTxn) error) error {
+func (t *TikvStore) GetObjectNInfo(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (reader *GetObjectReader, err error) {
+	return
+}
+
+func (t *TikvStore) PutObject(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	return
+}
+func (t *TikvStore) DeleteObject(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
+	return ObjectInfo{}, nil
+}
+
+func (t *TikvStore) txn(ctx context.Context, f func(*tikv.KVTxn) error) error {
 	tx, err := t.client.Begin()
 	if err != nil {
 		return err
@@ -61,7 +78,7 @@ func (t *tikvStore) txn(ctx context.Context, f func(*tikv.KVTxn) error) error {
 
 }
 
-func (t *tikvStore) saveKeyKVWithTTL(ctx context.Context, key string, data []byte, ttl int64) error {
+func (t *TikvStore) SaveKeyKVWithTTL(ctx context.Context, key string, data []byte, ttl int64) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	return t.txn(timeoutCtx, func(tx *tikv.KVTxn) error {
@@ -69,17 +86,17 @@ func (t *tikvStore) saveKeyKVWithTTL(ctx context.Context, key string, data []byt
 	})
 
 }
-func (t *tikvStore) saveKeyKV(ctx context.Context, key string, data []byte, opts ...options) error {
-	return t.saveKeyKVWithTTL(ctx, key, data, opts[0].ttl)
+func (t *TikvStore) SaveKeyKV(ctx context.Context, key string, data []byte, opts ...options) error {
+	return t.SaveKeyKVWithTTL(ctx, key, data, opts[0].ttl)
 }
-func (t *tikvStore) deleteKeyKV(ctx context.Context, key string) error {
+func (t *TikvStore) DeleteKeyKV(ctx context.Context, key string) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	return t.txn(timeoutCtx, func(tx *tikv.KVTxn) error {
 		return tx.Delete([]byte(key))
 	})
 }
-func (t *tikvStore) readKeyKV(ctx context.Context, key string) ([]byte, error) {
+func (t *TikvStore) ReadKeyKV(ctx context.Context, key string) ([]byte, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	var (
@@ -95,7 +112,7 @@ func (t *tikvStore) readKeyKV(ctx context.Context, key string) ([]byte, error) {
 	})
 	return data, err
 }
-func (t *tikvStore) keysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error) {
+func (t *TikvStore) KeysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error) {
 	var keys = make([]kv, 0)
 	err := t.txn(ctx, func(tx *tikv.KVTxn) error {
 		iter, err := tx.Iter([]byte(prefix), nil)
@@ -121,41 +138,121 @@ func (t *tikvStore) keysPrefixKV(ctx context.Context, prefix string, keysOnly bo
 	return keys, err
 }
 
-type redisStore struct {
-	client redis.UniversalClient
+type RedisStore struct {
+	nsMutex *nsLockMap
+	client  redis.UniversalClient
 }
 
 func RegisterRedisStore(client redis.UniversalClient) {
-	globalKVClient = &redisStore{
-		client: client,
+	GlobalKVClient = &RedisStore{
+		client:  client,
+		nsMutex: newNSLock(false),
 	}
 }
 
-func (r *redisStore) saveKeyKVWithTTL(ctx context.Context, key string, data []byte, ttl int64) error {
+func (r *RedisStore) GetObjectNInfo(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (reader *GetObjectReader, err error) {
+	if err = checkGetObjArgs(ctx, bucket, object); err != nil {
+		return nil, err
+	}
+	nsUnlocker := func() {}
+	if lockType != noLock {
+		// Lock the object before reading.
+		lock := r.nsMutex.NewNSLock(nil, bucket, object)
+		switch lockType {
+		case writeLock:
+			lkctx, err := lock.GetLock(ctx, globalOperationTimeout)
+			if err != nil {
+				return nil, err
+			}
+			ctx = lkctx.Context()
+			nsUnlocker = func() { lock.Unlock(lkctx.Cancel) }
+		case readLock:
+			lkctx, err := lock.GetRLock(ctx, globalOperationTimeout)
+			if err != nil {
+				return nil, err
+			}
+			ctx = lkctx.Context()
+			nsUnlocker = func() { lock.RUnlock(lkctx.Cancel) }
+		}
+	}
+	var data []byte
+	data, err = r.ReadKeyKV(ctx, pathJoin(bucket, object))
+	if err != nil {
+		nsUnlocker()
+		if err == redis.Nil {
+			return nil, ObjectNotFound{Bucket: bucket, Object: object}
+		}
+		return nil, err
+	}
+	return NewGetObjectReaderFromReader(bytes.NewBuffer(data), ObjectInfo{
+		Bucket: bucket,
+		Name:   object,
+	}, opts, nsUnlocker)
+}
+
+func (r *RedisStore) PutObject(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	if err = checkGetObjArgs(ctx, bucket, object); err != nil {
+		return ObjectInfo{}, err
+	}
+	lk := r.nsMutex.NewNSLock(nil, bucket, object)
+	lkctx, err := lk.GetLock(ctx, globalOperationTimeout)
+	if err != nil {
+		return objInfo, err
+	}
+	ctx = lkctx.Context()
+	defer lk.Unlock(lkctx.Cancel)
+	rd, err := io.ReadAll(data.Reader)
+	if err != nil {
+		return objInfo, err
+	}
+	return ObjectInfo{
+		Bucket: bucket,
+		Name:   object,
+	}, r.SaveKeyKV(ctx, pathJoin(bucket, object), rd)
+}
+
+func (r *RedisStore) DeleteObject(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
+	lk := r.nsMutex.NewNSLock(nil, bucket, object)
+	lkctx, err := lk.GetLock(ctx, globalOperationTimeout)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	ctx = lkctx.Context()
+	defer lk.Unlock(lkctx.Cancel)
+	if err = checkDelObjArgs(ctx, bucket, object); err != nil {
+		return ObjectInfo{}, err
+	}
+	return ObjectInfo{
+		Bucket: bucket,
+		Name:   object,
+	}, r.DeleteKeyKV(ctx, pathJoin(bucket, object))
+}
+
+func (r *RedisStore) SaveKeyKVWithTTL(ctx context.Context, key string, data []byte, ttl int64) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	return r.client.Set(timeoutCtx, key, data, time.Duration(ttl)).Err()
 }
-func (r *redisStore) saveKeyKV(ctx context.Context, key string, data []byte, opts ...options) error {
+func (r *RedisStore) SaveKeyKV(ctx context.Context, key string, data []byte, opts ...options) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	if len(opts) > 0 {
-		return r.saveKeyKVWithTTL(ctx, key, data, opts[0].ttl)
+		return r.SaveKeyKVWithTTL(ctx, key, data, opts[0].ttl)
 	}
 	return r.client.Set(timeoutCtx, key, data, 0).Err()
 }
-func (r *redisStore) deleteKeyKV(ctx context.Context, key string) error {
+func (r *RedisStore) DeleteKeyKV(ctx context.Context, key string) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 
 	return r.client.Del(timeoutCtx, key).Err()
 }
-func (r *redisStore) readKeyKV(ctx context.Context, key string) ([]byte, error) {
+func (r *RedisStore) ReadKeyKV(ctx context.Context, key string) ([]byte, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	return r.client.Get(timeoutCtx, key).Bytes()
 }
-func (r *redisStore) keysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error) {
+func (r *RedisStore) KeysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error) {
 	var keys = make([]kv, 0)
 	iter := r.client.Scan(ctx, 0, prefix+"*", 0).Iterator()
 	for iter.Next(ctx) {

@@ -303,16 +303,16 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 	globalObjectAPI = newObject
 	globalObjLayerMutex.Unlock()
 
-	go globalIAMSys.Init(GlobalContext, newObject, globalEtcdClient, globalKVClient, globalRefreshIAMInterval)
+	go globalIAMSys.Init(GlobalContext, newObject, globalEtcdClient, GlobalKVClient, globalRefreshIAMInterval)
 
-	if gatewayName == NASBackendGateway {
+	if gatewayName == NASBackendGateway || gatewayName == JuiceFSGateway {
 		buckets, err := newObject.ListBuckets(GlobalContext)
 		if err != nil {
 			logger.Fatal(err, "Unable to list buckets")
 		}
 		logger.FatalIf(globalBucketMetadataSys.Init(GlobalContext, buckets, newObject), "Unable to initialize bucket metadata")
-
 		logger.FatalIf(globalNotificationSys.InitBucketTargets(GlobalContext, newObject), "Unable to initialize bucket targets for notification system")
+		globalBucketQuotaSys.Init(newObject)
 	}
 
 	if globalCacheConfig.Enabled {

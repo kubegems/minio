@@ -210,6 +210,10 @@ func (g *Azure) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLayer, er
 	}, nil
 }
 
+func (a *azureObjects) GetMetaStore() minio.ObjectIO {
+	return a
+}
+
 func parseStorageEndpoint(host string, accountName string) (*url.URL, error) {
 	var endpoint string
 
@@ -645,12 +649,12 @@ func (a *azureObjects) DeleteBucket(ctx context.Context, bucket string, opts min
 // distinguish between Azure continuation tokens and application
 // supplied markers.
 //
-// - NextMarker in ListObjectsV1 response is constructed by
-//   prefixing "{minio}" to the Azure continuation token,
-//   e.g, "{minio}CgRvYmoz"
+//   - NextMarker in ListObjectsV1 response is constructed by
+//     prefixing "{minio}" to the Azure continuation token,
+//     e.g, "{minio}CgRvYmoz"
 //
-// - Application supplied markers are used as-is to list
-//   object keys that appear after it in the lexicographical order.
+//   - Application supplied markers are used as-is to list
+//     object keys that appear after it in the lexicographical order.
 func (a *azureObjects) ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
 	var objects []minio.ObjectInfo
 	var prefixes []string

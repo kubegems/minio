@@ -183,6 +183,9 @@ func NewFSObjectLayer(fsPath string) (ObjectLayer, error) {
 	// Return successfully initialized object layer.
 	return fs, nil
 }
+func (fs *FSObjects) GetMetaStore() ObjectIO {
+	return fs
+}
 
 // NewNSLock - initialize a new namespace RWLocker instance.
 func (fs *FSObjects) NewNSLock(bucket string, objects ...string) RWLocker {

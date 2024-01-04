@@ -709,6 +709,7 @@ func bucketSummary(p string) (s *meta.Summary, err error) {
 	return
 }
 
+// cpu使用率太高 todo
 func initBucket(reg prometheus.Registerer) {
 	fdir, eno := _jfs.Open(_mctx, sep, 0)
 	if eno != 0 {

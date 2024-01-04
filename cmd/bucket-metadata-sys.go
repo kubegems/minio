@@ -18,7 +18,6 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -46,7 +45,7 @@ type BucketMetadataSys struct {
 
 // Remove bucket metadata from memory.
 func (sys *BucketMetadataSys) Remove(bucket string) {
-	if globalIsGateway {
+	if globalIsGateway && globalGatewayName != JuiceFSGateway {
 		return
 	}
 	sys.Lock()
@@ -61,7 +60,7 @@ func (sys *BucketMetadataSys) Remove(bucket string) {
 // so they should be replaced atomically and not appended to, etc.
 // Data is not persisted to disk.
 func (sys *BucketMetadataSys) Set(bucket string, meta BucketMetadata) {
-	if globalIsGateway {
+	if globalIsGateway && globalGatewayName != JuiceFSGateway {
 		return
 	}
 
@@ -80,25 +79,11 @@ func (sys *BucketMetadataSys) Update(ctx context.Context, bucket string, configF
 		return errServerNotInitialized
 	}
 
-	if globalIsGateway && globalGatewayName != NASBackendGateway {
-		if configFile == bucketPolicyConfig {
-			if configData == nil {
-				return objAPI.DeleteBucketPolicy(ctx, bucket)
-			}
-			config, err := policy.ParseConfig(bytes.NewReader(configData), bucket)
-			if err != nil {
-				return err
-			}
-			return objAPI.SetBucketPolicy(ctx, bucket, config)
-		}
-		return NotImplemented{}
-	}
-
 	if bucket == minioMetaBucket {
 		return errInvalidArgument
 	}
 
-	meta, err := loadBucketMetadata(ctx, objAPI, bucket)
+	meta, err := loadBucketMetadata(ctx, objAPI.GetMetaStore(), bucket)
 	if err != nil {
 		if !globalIsErasure && !globalIsDistErasure && errors.Is(err, errVolumeNotFound) {
 			// Only single drive mode needs this fallback.
@@ -148,7 +133,7 @@ func (sys *BucketMetadataSys) Update(ctx context.Context, bucket string, configF
 		return fmt.Errorf("Unknown bucket %s metadata update requested %s", bucket, configFile)
 	}
 
-	if err := meta.Save(ctx, objAPI); err != nil {
+	if err := meta.Save(ctx, objAPI.GetMetaStore()); err != nil {
 		return err
 	}
 
@@ -383,7 +368,7 @@ func (sys *BucketMetadataSys) GetConfig(ctx context.Context, bucket string) (Buc
 		return newBucketMetadata(bucket), errServerNotInitialized
 	}
 
-	if globalIsGateway {
+	if globalIsGateway && globalGatewayName != JuiceFSGateway {
 		return newBucketMetadata(bucket), NotImplemented{}
 	}
 
@@ -397,7 +382,7 @@ func (sys *BucketMetadataSys) GetConfig(ctx context.Context, bucket string) (Buc
 	if ok {
 		return meta, nil
 	}
-	meta, err := loadBucketMetadata(ctx, objAPI, bucket)
+	meta, err := loadBucketMetadata(ctx, objAPI.GetMetaStore(), bucket)
 	if err != nil {
 		return meta, err
 	}
@@ -436,7 +421,7 @@ func (sys *BucketMetadataSys) concurrentLoad(ctx context.Context, buckets []Buck
 				ScanMode: madmin.HealDeepScan,
 				Recreate: true,
 			})
-			meta, err := loadBucketMetadata(ctx, objAPI, buckets[index].Name)
+			meta, err := loadBucketMetadata(ctx, objAPI.GetMetaStore(), buckets[index].Name)
 			if err != nil {
 				if !globalIsErasure && !globalIsDistErasure && errors.Is(err, errVolumeNotFound) {
 					meta = newBucketMetadata(buckets[index].Name)

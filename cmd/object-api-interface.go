@@ -248,6 +248,8 @@ type ObjectLayer interface {
 	PutObjectTags(context.Context, string, string, string, ObjectOptions) (ObjectInfo, error)
 	GetObjectTags(context.Context, string, string, ObjectOptions) (*tags.Tags, error)
 	DeleteObjectTags(context.Context, string, string, ObjectOptions) (ObjectInfo, error)
+	// GetMetaStore returns the underlying metadata store
+	GetMetaStore() ObjectIO
 }
 
 // GetObject - TODO(aead): This function just acts as an adapter for GetObject tests and benchmarks

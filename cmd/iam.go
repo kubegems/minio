@@ -149,7 +149,7 @@ func (sys *IAMSys) doIAMConfigMigration(ctx context.Context) error {
 }
 
 // initStore initializes IAM stores
-func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client, store kvStore) {
+func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client, store KvStore) {
 	if globalLDAPConfig.Enabled {
 		sys.EnableLDAPSys()
 	}
@@ -200,7 +200,7 @@ func (sys *IAMSys) Load(ctx context.Context) error {
 }
 
 // Init - initializes config system by reading entries from config/iam
-func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etcd.Client, store kvStore, iamRefreshInterval time.Duration) {
+func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etcd.Client, store KvStore, iamRefreshInterval time.Duration) {
 	sys.Lock()
 	defer sys.Unlock()
 

@@ -140,21 +140,21 @@ func randString(n int, src rand.Source, prefix string) string {
 }
 
 // Chains all credential types, in the following order:
-//  - AWS env vars (i.e. AWS_ACCESS_KEY_ID)
-//  - AWS creds file (i.e. AWS_SHARED_CREDENTIALS_FILE or ~/.aws/credentials)
-//  - Static credentials provided by user (i.e. MINIO_ROOT_USER/MINIO_ACCESS_KEY)
+//   - AWS env vars (i.e. AWS_ACCESS_KEY_ID)
+//   - AWS creds file (i.e. AWS_SHARED_CREDENTIALS_FILE or ~/.aws/credentials)
+//   - Static credentials provided by user (i.e. MINIO_ROOT_USER/MINIO_ACCESS_KEY)
 var defaultProviders = []credentials.Provider{
 	&credentials.EnvAWS{},
 	&credentials.FileAWSCredentials{},
 }
 
 // Chains all credential types, in the following order:
-//  - AWS env vars (i.e. AWS_ACCESS_KEY_ID)
-//  - AWS creds file (i.e. AWS_SHARED_CREDENTIALS_FILE or ~/.aws/credentials)
-//  - IAM profile based credentials. (performs an HTTP
-//    call to a pre-defined endpoint, only valid inside
-//    configured ec2 instances)
-//  - Static credentials provided by user (i.e. MINIO_ROOT_USER/MINIO_ACCESS_KEY)
+//   - AWS env vars (i.e. AWS_ACCESS_KEY_ID)
+//   - AWS creds file (i.e. AWS_SHARED_CREDENTIALS_FILE or ~/.aws/credentials)
+//   - IAM profile based credentials. (performs an HTTP
+//     call to a pre-defined endpoint, only valid inside
+//     configured ec2 instances)
+//   - Static credentials provided by user (i.e. MINIO_ROOT_USER/MINIO_ACCESS_KEY)
 var defaultAWSCredProviders = []credentials.Provider{
 	&credentials.EnvAWS{},
 	&credentials.FileAWSCredentials{},
@@ -299,6 +299,10 @@ type s3Objects struct {
 // GetMetrics returns this gateway's metrics
 func (l *s3Objects) GetMetrics(ctx context.Context) (*minio.BackendMetrics, error) {
 	return l.Metrics, nil
+}
+
+func (l *s3Objects) GetMetaStore() minio.ObjectIO {
+	return l
 }
 
 // Shutdown saves any gateway metadata to disk

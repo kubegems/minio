@@ -263,7 +263,7 @@ var (
 	globalEtcdClient *etcd.Client
 
 	// kvstore to save iam information
-	globalKVClient kvStore
+	GlobalKVClient KvStore
 
 	// Cluster replication manager.
 	globalSiteReplicationSys SiteReplicationSys

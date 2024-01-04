@@ -17,10 +17,10 @@ type IAMKVStore struct {
 	sync.RWMutex
 	*iamCache
 	usersSysType UsersSysType
-	rdb          kvStore
+	rdb          KvStore
 }
 
-func newIAMKVStore(rdb kvStore, usersSysType UsersSysType) *IAMKVStore {
+func newIAMKVStore(rdb KvStore, usersSysType UsersSysType) *IAMKVStore {
 	return &IAMKVStore{
 		iamCache:     newIamCache(),
 		usersSysType: usersSysType,
@@ -60,11 +60,11 @@ func (rd *IAMKVStore) saveIAMConfig(ctx context.Context, item interface{}, itemP
 			return err
 		}
 	}
-	return rd.rdb.saveKeyKV(ctx, itemPath, data, opts...)
+	return rd.rdb.SaveKeyKV(ctx, itemPath, data, opts...)
 }
 
 func (rd *IAMKVStore) loadIAMConfig(ctx context.Context, item interface{}, path string) error {
-	data, err := rd.rdb.readKeyKV(ctx, path)
+	data, err := rd.rdb.ReadKeyKV(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func (rd *IAMKVStore) loadIAMConfig(ctx context.Context, item interface{}, path 
 }
 
 func (rd *IAMKVStore) loadIAMConfigBytes(ctx context.Context, path string) ([]byte, error) {
-	data, err := rd.rdb.readKeyKV(ctx, path)
+	data, err := rd.rdb.ReadKeyKV(ctx, path)
 	if err != nil {
 		return nil, err
 	}
@@ -80,14 +80,14 @@ func (rd *IAMKVStore) loadIAMConfigBytes(ctx context.Context, path string) ([]by
 }
 
 func (rd *IAMKVStore) deleteIAMConfig(ctx context.Context, path string) error {
-	return rd.rdb.deleteKeyKV(ctx, path)
+	return rd.rdb.DeleteKeyKV(ctx, path)
 }
 
 func (rd *IAMKVStore) migrateUsersConfigToV1(ctx context.Context) error {
 	basePrefix := iamConfigUsersPrefix
 	ctx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
-	r, err := rd.rdb.keysPrefixKV(ctx, basePrefix, true)
+	r, err := rd.rdb.KeysPrefixKV(ctx, basePrefix, true)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func (rd *IAMKVStore) migrateUsersConfigToV1(ctx context.Context) error {
 			}
 
 			// 3. delete policy file in old loc.
-			rd.rdb.deleteKeyKV(ctx, oldPolicyPath)
+			rd.rdb.DeleteKeyKV(ctx, oldPolicyPath)
 		}
 
 	next:
@@ -238,7 +238,7 @@ func (rd *IAMKVStore) loadPolicyDocs(ctx context.Context, m map[string]PolicyDoc
 	defer cancel()
 	//  Retrieve all keys and values to avoid too many calls to etcd in case of
 	//  a large number of policies
-	r, err := rd.rdb.keysPrefixKV(ctx, iamConfigPoliciesPrefix, false)
+	r, err := rd.rdb.KeysPrefixKV(ctx, iamConfigPoliciesPrefix, false)
 	if err != nil {
 		return err
 	}
@@ -253,8 +253,8 @@ func (rd *IAMKVStore) loadPolicyDocs(ctx context.Context, m map[string]PolicyDoc
 func (rd *IAMKVStore) addUser(ctx context.Context, user string, userType IAMUserType, u UserIdentity, m map[string]auth.Credentials) error {
 	if u.Credentials.IsExpired() {
 		// Delete expired identity.
-		rd.rdb.deleteKeyKV(ctx, getUserIdentityPath(user, userType))
-		rd.rdb.deleteKeyKV(ctx, getMappedPolicyPath(user, userType, false))
+		rd.rdb.DeleteKeyKV(ctx, getUserIdentityPath(user, userType))
+		rd.rdb.DeleteKeyKV(ctx, getMappedPolicyPath(user, userType, false))
 		return nil
 	}
 	if u.Credentials.AccessKey == "" {
@@ -304,7 +304,7 @@ func (rd *IAMKVStore) loadUsers(ctx context.Context, userType IAMUserType, m map
 
 	// Retrieve all keys and values to avoid too many calls to etcd in case of
 	// a large number of users
-	r, err := rd.rdb.keysPrefixKV(cctx, basePrefix, false)
+	r, err := rd.rdb.KeysPrefixKV(cctx, basePrefix, false)
 	if err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func redisKvsToSet(prefix string, kvs []kv) set.StringSet {
 func (rd *IAMKVStore) loadGroups(ctx context.Context, m map[string]GroupInfo) error {
 	cctx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
-	r, err := rd.rdb.keysPrefixKV(cctx, iamConfigGroupsPrefix, true)
+	r, err := rd.rdb.KeysPrefixKV(cctx, iamConfigGroupsPrefix, true)
 	if err != nil {
 		return err
 	}
@@ -401,7 +401,7 @@ func (rd *IAMKVStore) loadMappedPolicies(ctx context.Context, userType IAMUserTy
 	}
 	// Retrieve all keys and values to avoid too many calls to etcd in case of
 	// a large number of policy mappings
-	r, err := rd.rdb.keysPrefixKV(cctx, basePrefix, false)
+	r, err := rd.rdb.KeysPrefixKV(cctx, basePrefix, false)
 	if err != nil {
 		return err
 	}

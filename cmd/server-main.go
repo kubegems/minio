@@ -544,7 +544,7 @@ func serverMain(ctx *cli.Context) {
 	}
 
 	// Initialize users credentials and policies in background right after config has initialized.
-	go globalIAMSys.Init(GlobalContext, newObject, globalEtcdClient, globalKVClient, globalRefreshIAMInterval)
+	go globalIAMSys.Init(GlobalContext, newObject, globalEtcdClient, GlobalKVClient, globalRefreshIAMInterval)
 
 	// Background all other operations such as initializing bucket metadata etc.
 	go func() {

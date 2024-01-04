@@ -146,6 +146,11 @@ func (n *JfsObjects) Name() string {
 	return minio.JuiceFSGateway
 }
 
+// IsNotificationSupported returns whether bucket notification is applicable for this layer.
+func (n *JfsObjects) IsNotificationSupported() bool {
+	return true
+}
+
 func initIAMStore(addr string) {
 	p := strings.Index(addr, "://")
 	if p < 0 {
@@ -205,6 +210,11 @@ func (n *JfsObjects) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLaye
 	jfsObj := &JfsObjects{fs: jfs, conf: conf, listPool: minio.NewTreeWalkPool(time.Minute * 30), gConf: &Config{MultiBucket: n.ctx.Bool("multi-buckets"), KeepEtag: n.ctx.Bool("keep-etag"), Mode: uint16(0666 &^ umask), DirMode: uint16(0777 &^ umask)}}
 	go jfsObj.cleanup()
 	return jfsObj, nil
+}
+
+// GetMetaStore - 返回元数据存储引擎
+func (n *JfsObjects) GetMetaStore() minio.ObjectIO {
+	return minio.GlobalKVClient
 }
 
 func (n *JfsObjects) IsCompressionSupported() bool {

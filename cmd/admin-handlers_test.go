@@ -78,7 +78,7 @@ func prepareAdminErasureTestBed(ctx context.Context) (*adminErasureTestBed, erro
 
 	initConfigSubsystem(ctx, objLayer)
 
-	globalIAMSys.Init(ctx, objLayer, globalEtcdClient, globalKVClient, 2*time.Second)
+	globalIAMSys.Init(ctx, objLayer, globalEtcdClient, GlobalKVClient, 2*time.Second)
 
 	// Setup admin mgmt REST API handlers.
 	adminRouter := mux.NewRouter()

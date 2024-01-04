@@ -35,7 +35,7 @@ type BucketQuotaSys struct {
 
 // Get - Get quota configuration.
 func (sys *BucketQuotaSys) Get(ctx context.Context, bucketName string) (*madmin.BucketQuota, error) {
-	if globalIsGateway {
+	if globalIsGateway && globalGatewayName != JuiceFSGateway {
 		objAPI := newObjectLayerFn()
 		if objAPI == nil {
 			return nil, errServerNotInitialized

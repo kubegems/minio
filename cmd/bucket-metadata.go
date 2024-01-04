@@ -115,7 +115,7 @@ func newBucketMetadata(name string) BucketMetadata {
 
 // Load - loads the metadata of bucket by name from ObjectLayer api.
 // If an error is returned the returned metadata will be default initialized.
-func (b *BucketMetadata) Load(ctx context.Context, api ObjectLayer, name string) error {
+func (b *BucketMetadata) Load(ctx context.Context, api ObjectIO, name string) error {
 	if name == "" {
 		logger.LogIf(ctx, errors.New("bucket name cannot be empty"))
 		return errors.New("bucket name cannot be empty")
@@ -146,24 +146,24 @@ func (b *BucketMetadata) Load(ctx context.Context, api ObjectLayer, name string)
 }
 
 // loadBucketMetadata loads and migrates to bucket metadata.
-func loadBucketMetadata(ctx context.Context, objectAPI ObjectLayer, bucket string) (BucketMetadata, error) {
+func loadBucketMetadata(ctx context.Context, api ObjectIO, bucket string) (BucketMetadata, error) {
 	b := newBucketMetadata(bucket)
-	err := b.Load(ctx, objectAPI, b.Name)
+	err := b.Load(ctx, api, b.Name)
 	if err != nil && !errors.Is(err, errConfigNotFound) {
 		return b, err
 	}
 
 	// Old bucket without bucket metadata. Hence we migrate existing settings.
-	if err := b.convertLegacyConfigs(ctx, objectAPI); err != nil {
+	if err := b.convertLegacyConfigs(ctx, api); err != nil {
 		return b, err
 	}
 	// migrate unencrypted remote targets
-	return b, b.migrateTargetConfig(ctx, objectAPI)
+	return b, b.migrateTargetConfig(ctx, api)
 }
 
 // parseAllConfigs will parse all configs and populate the private fields.
 // The first error encountered is returned.
-func (b *BucketMetadata) parseAllConfigs(ctx context.Context, objectAPI ObjectLayer) (err error) {
+func (b *BucketMetadata) parseAllConfigs(ctx context.Context, api ObjectIO) (err error) {
 	if len(b.PolicyConfigJSON) != 0 {
 		b.policyConfig, err = policy.ParseConfig(bytes.NewReader(b.PolicyConfigJSON), b.Name)
 		if err != nil {
@@ -253,7 +253,7 @@ func (b *BucketMetadata) parseAllConfigs(ctx context.Context, objectAPI ObjectLa
 	return nil
 }
 
-func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI ObjectLayer) error {
+func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, api ObjectIO) error {
 	legacyConfigs := []string{
 		legacyBucketObjectLockEnabledConfigFile,
 		bucketPolicyConfig,
@@ -279,7 +279,7 @@ func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI Obj
 	for _, legacyFile := range legacyConfigs {
 		configFile := path.Join(bucketMetaPrefix, b.Name, legacyFile)
 
-		configData, err := readConfig(ctx, objectAPI, configFile)
+		configData, err := readConfig(ctx, api, configFile)
 		if err != nil {
 			switch err.(type) {
 			case ObjectExistsAsDirectory:
@@ -299,7 +299,7 @@ func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI Obj
 
 	if len(configs) == 0 {
 		// nothing to update, return right away.
-		return b.parseAllConfigs(ctx, objectAPI)
+		return b.parseAllConfigs(ctx, api)
 	}
 
 	for legacyFile, configData := range configs {
@@ -333,13 +333,13 @@ func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI Obj
 		}
 	}
 
-	if err := b.Save(ctx, objectAPI); err != nil {
+	if err := b.Save(ctx, api); err != nil {
 		return err
 	}
 
 	for legacyFile := range configs {
 		configFile := path.Join(bucketMetaPrefix, b.Name, legacyFile)
-		if err := deleteConfig(ctx, objectAPI, configFile); err != nil && !errors.Is(err, errConfigNotFound) {
+		if err := deleteConfig(ctx, api, configFile); err != nil && !errors.Is(err, errConfigNotFound) {
 			logger.LogIf(ctx, err)
 		}
 	}
@@ -348,7 +348,7 @@ func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI Obj
 }
 
 // Save config to supplied ObjectLayer api.
-func (b *BucketMetadata) Save(ctx context.Context, api ObjectLayer) error {
+func (b *BucketMetadata) Save(ctx context.Context, api ObjectIO) error {
 	if err := b.parseAllConfigs(ctx, api); err != nil {
 		return err
 	}
@@ -371,7 +371,7 @@ func (b *BucketMetadata) Save(ctx context.Context, api ObjectLayer) error {
 
 // deleteBucketMetadata deletes bucket metadata
 // If config does not exist no error is returned.
-func deleteBucketMetadata(ctx context.Context, obj objectDeleter, bucket string) error {
+func deleteBucketMetadata(ctx context.Context, obj ObjectIO, bucket string) error {
 	metadataFiles := []string{
 		dataUsageCacheName,
 		bucketMetadataFile,
@@ -387,7 +387,7 @@ func deleteBucketMetadata(ctx context.Context, obj objectDeleter, bucket string)
 }
 
 // migrate config for remote targets by encrypting data if currently unencrypted and kms is configured.
-func (b *BucketMetadata) migrateTargetConfig(ctx context.Context, objectAPI ObjectLayer) error {
+func (b *BucketMetadata) migrateTargetConfig(ctx context.Context, api ObjectIO) error {
 	var err error
 	// early return if no targets or already encrypted
 	if len(b.BucketTargetsConfigJSON) == 0 || GlobalKMS == nil || len(b.BucketTargetsConfigMetaJSON) != 0 {
@@ -401,7 +401,7 @@ func (b *BucketMetadata) migrateTargetConfig(ctx context.Context, objectAPI Obje
 
 	b.BucketTargetsConfigJSON = encBytes
 	b.BucketTargetsConfigMetaJSON = metaBytes
-	return b.Save(ctx, objectAPI)
+	return b.Save(ctx, api)
 }
 
 // encrypt bucket metadata if kms is configured.
