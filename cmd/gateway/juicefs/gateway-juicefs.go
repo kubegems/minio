@@ -43,6 +43,7 @@ import (
 
 	"github.com/juicedata/juicefs/pkg/vfs"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
+	"github.com/tikv/client-go/v2/txnkv"
 )
 
 const (
@@ -167,7 +168,18 @@ func initIAMStore(addr string) {
 		opt.WriteTimeout = time.Second * 5
 		//opt.MaxRetries = -1 // Redis use -1 to disable retries
 		opt.MaxRetries = 10
-		minio.GlobalRedisClient = redis.NewClient(opt)
+		minio.RegisterRedisStore(redis.NewClient(opt))
+	case "tikv":
+		u, err := url.Parse(addr)
+		if err != nil {
+			logger.Fatalf("url parse %s: %s", addr, err)
+		}
+		client, err := txnkv.NewClient(strings.Split(u.Host, ","))
+		if err != nil {
+			logger.Fatalf("tikv init failed %s: %s", addr, err)
+		}
+		minio.RegisterTikvStore(client.KVStore)
+
 	default:
 		logger.Infof("current not support %s,use memory IAM store", driverType)
 	}

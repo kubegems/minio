@@ -39,7 +39,6 @@ import (
 	"github.com/minio/minio/internal/color"
 	"github.com/minio/minio/internal/logger"
 	iampolicy "github.com/minio/pkg/iam/policy"
-	"github.com/redis/go-redis/v9"
 	etcd "go.etcd.io/etcd/client/v3"
 )
 
@@ -150,7 +149,7 @@ func (sys *IAMSys) doIAMConfigMigration(ctx context.Context) error {
 }
 
 // initStore initializes IAM stores
-func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client, redisClient redis.UniversalClient) {
+func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client, store kvStore) {
 	if globalLDAPConfig.Enabled {
 		sys.EnableLDAPSys()
 	}
@@ -159,8 +158,8 @@ func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client, redisC
 		if globalIsGateway {
 			if globalGatewayName == NASBackendGateway {
 				sys.store = &IAMStoreSys{newIAMObjectStore(objAPI, sys.usersSysType)}
-			} else if redisClient != nil {
-				sys.store = &IAMStoreSys{newIAMRedisStore(redisClient, sys.usersSysType)}
+			} else if store != nil {
+				sys.store = &IAMStoreSys{newIAMKVStore(store, sys.usersSysType)}
 				logger.Info("INFO: %s gateway is running redis IAM store", globalGatewayName)
 			} else {
 				sys.store = &IAMStoreSys{newIAMDummyStore(sys.usersSysType)}
@@ -201,14 +200,14 @@ func (sys *IAMSys) Load(ctx context.Context) error {
 }
 
 // Init - initializes config system by reading entries from config/iam
-func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etcd.Client, redisClient redis.UniversalClient, iamRefreshInterval time.Duration) {
+func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer, etcdClient *etcd.Client, store kvStore, iamRefreshInterval time.Duration) {
 	sys.Lock()
 	defer sys.Unlock()
 
 	sys.iamRefreshInterval = iamRefreshInterval
 
 	// Initialize IAM store
-	sys.initStore(objAPI, etcdClient, redisClient)
+	sys.initStore(objAPI, etcdClient, store)
 
 	retryCtx, cancel := context.WithCancel(ctx)
 

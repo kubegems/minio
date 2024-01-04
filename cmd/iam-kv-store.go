@@ -10,45 +10,44 @@ import (
 	"github.com/minio/minio/internal/auth"
 	"github.com/minio/minio/internal/config"
 	"github.com/minio/minio/internal/kms"
-	"github.com/redis/go-redis/v9"
 )
 
-// IAMRedisStore - 使用redis存储iam数据信息
-type IAMRedisStore struct {
+// IAMKVStore - 使用redis/tikv存储iam数据信息
+type IAMKVStore struct {
 	sync.RWMutex
 	*iamCache
 	usersSysType UsersSysType
-	rdb          redis.UniversalClient
+	rdb          kvStore
 }
 
-func newIAMRedisStore(rdb redis.UniversalClient, usersSysType UsersSysType) *IAMRedisStore {
-	return &IAMRedisStore{
+func newIAMKVStore(rdb kvStore, usersSysType UsersSysType) *IAMKVStore {
+	return &IAMKVStore{
 		iamCache:     newIamCache(),
 		usersSysType: usersSysType,
 		rdb:          rdb,
 	}
 }
 
-func (rd *IAMRedisStore) rlock() *iamCache {
+func (rd *IAMKVStore) rlock() *iamCache {
 	rd.RLock()
 	return rd.iamCache
 }
-func (rd *IAMRedisStore) runlock() {
+func (rd *IAMKVStore) runlock() {
 	rd.RUnlock()
 }
 
-func (rd *IAMRedisStore) lock() *iamCache {
+func (rd *IAMKVStore) lock() *iamCache {
 	rd.Lock()
 	return rd.iamCache
 }
-func (rd *IAMRedisStore) unlock() {
+func (rd *IAMKVStore) unlock() {
 	rd.Unlock()
 }
-func (rd *IAMRedisStore) getUsersSysType() UsersSysType {
+func (rd *IAMKVStore) getUsersSysType() UsersSysType {
 	return rd.usersSysType
 }
 
-func (rd *IAMRedisStore) saveIAMConfig(ctx context.Context, item interface{}, itemPath string, opts ...options) error {
+func (rd *IAMKVStore) saveIAMConfig(ctx context.Context, item interface{}, itemPath string, opts ...options) error {
 	data, err := json.Marshal(item)
 	if err != nil {
 		return err
@@ -61,34 +60,34 @@ func (rd *IAMRedisStore) saveIAMConfig(ctx context.Context, item interface{}, it
 			return err
 		}
 	}
-	return saveKeyRedis(ctx, rd.rdb, itemPath, data, opts...)
+	return rd.rdb.saveKeyKV(ctx, itemPath, data, opts...)
 }
 
-func (rd *IAMRedisStore) loadIAMConfig(ctx context.Context, item interface{}, path string) error {
-	data, err := readKeyRedis(ctx, rd.rdb, path)
+func (rd *IAMKVStore) loadIAMConfig(ctx context.Context, item interface{}, path string) error {
+	data, err := rd.rdb.readKeyKV(ctx, path)
 	if err != nil {
 		return err
 	}
 	return getIAMConfig(item, data, path)
 }
 
-func (rd *IAMRedisStore) loadIAMConfigBytes(ctx context.Context, path string) ([]byte, error) {
-	data, err := readKeyRedis(ctx, rd.rdb, path)
+func (rd *IAMKVStore) loadIAMConfigBytes(ctx context.Context, path string) ([]byte, error) {
+	data, err := rd.rdb.readKeyKV(ctx, path)
 	if err != nil {
 		return nil, err
 	}
 	return decryptData(data, path)
 }
 
-func (rd *IAMRedisStore) deleteIAMConfig(ctx context.Context, path string) error {
-	return deleteKeyRedis(ctx, rd.rdb, path)
+func (rd *IAMKVStore) deleteIAMConfig(ctx context.Context, path string) error {
+	return rd.rdb.deleteKeyKV(ctx, path)
 }
 
-func (rd *IAMRedisStore) migrateUsersConfigToV1(ctx context.Context) error {
+func (rd *IAMKVStore) migrateUsersConfigToV1(ctx context.Context) error {
 	basePrefix := iamConfigUsersPrefix
 	ctx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
-	r, err := keysPrefixRedis(ctx, rd.rdb, basePrefix, true)
+	r, err := rd.rdb.keysPrefixKV(ctx, basePrefix, true)
 	if err != nil {
 		return err
 	}
@@ -119,7 +118,7 @@ func (rd *IAMRedisStore) migrateUsersConfigToV1(ctx context.Context) error {
 			}
 
 			// 3. delete policy file in old loc.
-			deleteKeyRedis(ctx, rd.rdb, oldPolicyPath)
+			rd.rdb.deleteKeyKV(ctx, oldPolicyPath)
 		}
 
 	next:
@@ -159,7 +158,7 @@ func (rd *IAMRedisStore) migrateUsersConfigToV1(ctx context.Context) error {
 	return nil
 }
 
-func (rd *IAMRedisStore) migrateToV1(ctx context.Context) error {
+func (rd *IAMKVStore) migrateToV1(ctx context.Context) error {
 	var iamFmt iamFormat
 	path := getIAMFormatFilePath()
 	if err := rd.loadIAMConfig(ctx, &iamFmt, path); err != nil {
@@ -189,13 +188,13 @@ func (rd *IAMRedisStore) migrateToV1(ctx context.Context) error {
 	return nil
 }
 
-func (rd *IAMRedisStore) migrateBackendFormat(ctx context.Context) error {
+func (rd *IAMKVStore) migrateBackendFormat(ctx context.Context) error {
 	rd.Lock()
 	defer rd.Unlock()
 	return rd.migrateToV1(ctx)
 }
 
-func (rd *IAMRedisStore) loadPolicyDoc(ctx context.Context, policy string, m map[string]PolicyDoc) error {
+func (rd *IAMKVStore) loadPolicyDoc(ctx context.Context, policy string, m map[string]PolicyDoc) error {
 	data, err := rd.loadIAMConfigBytes(ctx, getPolicyDocPath(policy))
 	if err != nil {
 		if err == errConfigNotFound {
@@ -214,7 +213,7 @@ func (rd *IAMRedisStore) loadPolicyDoc(ctx context.Context, policy string, m map
 	return nil
 }
 
-func (rd *IAMRedisStore) getPolicyDocKV(ctx context.Context, kvs redisKV, m map[string]PolicyDoc) error {
+func (rd *IAMKVStore) getPolicyDocKV(ctx context.Context, kvs kv, m map[string]PolicyDoc) error {
 	data, err := decryptData(kvs.value, string(kvs.key))
 	if err != nil {
 		if err == errConfigNotFound {
@@ -234,12 +233,12 @@ func (rd *IAMRedisStore) getPolicyDocKV(ctx context.Context, kvs redisKV, m map[
 	return nil
 }
 
-func (rd *IAMRedisStore) loadPolicyDocs(ctx context.Context, m map[string]PolicyDoc) error {
+func (rd *IAMKVStore) loadPolicyDocs(ctx context.Context, m map[string]PolicyDoc) error {
 	ctx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	//  Retrieve all keys and values to avoid too many calls to etcd in case of
 	//  a large number of policies
-	r, err := keysPrefixRedis(ctx, rd.rdb, iamConfigPoliciesPrefix, false)
+	r, err := rd.rdb.keysPrefixKV(ctx, iamConfigPoliciesPrefix, false)
 	if err != nil {
 		return err
 	}
@@ -251,11 +250,11 @@ func (rd *IAMRedisStore) loadPolicyDocs(ctx context.Context, m map[string]Policy
 	}
 	return nil
 }
-func (rd *IAMRedisStore) addUser(ctx context.Context, user string, userType IAMUserType, u UserIdentity, m map[string]auth.Credentials) error {
+func (rd *IAMKVStore) addUser(ctx context.Context, user string, userType IAMUserType, u UserIdentity, m map[string]auth.Credentials) error {
 	if u.Credentials.IsExpired() {
 		// Delete expired identity.
-		deleteKeyRedis(ctx, rd.rdb, getUserIdentityPath(user, userType))
-		deleteKeyRedis(ctx, rd.rdb, getMappedPolicyPath(user, userType, false))
+		rd.rdb.deleteKeyKV(ctx, getUserIdentityPath(user, userType))
+		rd.rdb.deleteKeyKV(ctx, getMappedPolicyPath(user, userType, false))
 		return nil
 	}
 	if u.Credentials.AccessKey == "" {
@@ -264,7 +263,7 @@ func (rd *IAMRedisStore) addUser(ctx context.Context, user string, userType IAMU
 	m[user] = u.Credentials
 	return nil
 }
-func (rd *IAMRedisStore) loadUser(ctx context.Context, user string, userType IAMUserType, m map[string]auth.Credentials) error {
+func (rd *IAMKVStore) loadUser(ctx context.Context, user string, userType IAMUserType, m map[string]auth.Credentials) error {
 	var u UserIdentity
 	err := rd.loadIAMConfig(ctx, &u, getUserIdentityPath(user, userType))
 	if err != nil {
@@ -276,7 +275,7 @@ func (rd *IAMRedisStore) loadUser(ctx context.Context, user string, userType IAM
 	return rd.addUser(ctx, user, userType, u, m)
 }
 
-func (rd *IAMRedisStore) getUserKV(ctx context.Context, userkv redisKV, userType IAMUserType, m map[string]auth.Credentials, basePrefix string) error {
+func (rd *IAMKVStore) getUserKV(ctx context.Context, userkv kv, userType IAMUserType, m map[string]auth.Credentials, basePrefix string) error {
 	var u UserIdentity
 	err := getIAMConfig(&u, userkv.value, string(userkv.key))
 	if err != nil {
@@ -289,7 +288,7 @@ func (rd *IAMRedisStore) getUserKV(ctx context.Context, userkv redisKV, userType
 	return rd.addUser(ctx, user, userType, u, m)
 }
 
-func (rd *IAMRedisStore) loadUsers(ctx context.Context, userType IAMUserType, m map[string]auth.Credentials) error {
+func (rd *IAMKVStore) loadUsers(ctx context.Context, userType IAMUserType, m map[string]auth.Credentials) error {
 	var basePrefix string
 	switch userType {
 	case svcUser:
@@ -305,7 +304,7 @@ func (rd *IAMRedisStore) loadUsers(ctx context.Context, userType IAMUserType, m 
 
 	// Retrieve all keys and values to avoid too many calls to etcd in case of
 	// a large number of users
-	r, err := keysPrefixRedis(cctx, rd.rdb, basePrefix, false)
+	r, err := rd.rdb.keysPrefixKV(cctx, basePrefix, false)
 	if err != nil {
 		return err
 	}
@@ -318,7 +317,7 @@ func (rd *IAMRedisStore) loadUsers(ctx context.Context, userType IAMUserType, m 
 	}
 	return nil
 }
-func (rd *IAMRedisStore) loadGroup(ctx context.Context, group string, m map[string]GroupInfo) error {
+func (rd *IAMKVStore) loadGroup(ctx context.Context, group string, m map[string]GroupInfo) error {
 	var gi GroupInfo
 	err := rd.loadIAMConfig(ctx, &gi, getGroupInfoPath(group))
 	if err != nil {
@@ -331,7 +330,7 @@ func (rd *IAMRedisStore) loadGroup(ctx context.Context, group string, m map[stri
 	return nil
 }
 
-func redisKvsToSet(prefix string, kvs []redisKV) set.StringSet {
+func redisKvsToSet(prefix string, kvs []kv) set.StringSet {
 	users := set.NewStringSet()
 	for _, kv := range kvs {
 		user := extractPathPrefixAndSuffix(string(kv.key), prefix, path.Base(string(kv.key)))
@@ -340,10 +339,10 @@ func redisKvsToSet(prefix string, kvs []redisKV) set.StringSet {
 	return users
 }
 
-func (rd *IAMRedisStore) loadGroups(ctx context.Context, m map[string]GroupInfo) error {
+func (rd *IAMKVStore) loadGroups(ctx context.Context, m map[string]GroupInfo) error {
 	cctx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
-	r, err := keysPrefixRedis(cctx, rd.rdb, iamConfigGroupsPrefix, true)
+	r, err := rd.rdb.keysPrefixKV(cctx, iamConfigGroupsPrefix, true)
 	if err != nil {
 		return err
 	}
@@ -358,7 +357,7 @@ func (rd *IAMRedisStore) loadGroups(ctx context.Context, m map[string]GroupInfo)
 	}
 	return nil
 }
-func (rd *IAMRedisStore) loadMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool, m map[string]MappedPolicy) error {
+func (rd *IAMKVStore) loadMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool, m map[string]MappedPolicy) error {
 	var p MappedPolicy
 	err := rd.loadIAMConfig(ctx, &p, getMappedPolicyPath(name, userType, isGroup))
 	if err != nil {
@@ -370,7 +369,7 @@ func (rd *IAMRedisStore) loadMappedPolicy(ctx context.Context, name string, user
 	m[name] = p
 	return nil
 }
-func getRedisMappedPolicy(ctx context.Context, kv redisKV, userType IAMUserType, isGroup bool, m map[string]MappedPolicy, basePrefix string) error {
+func getRedisMappedPolicy(ctx context.Context, kv kv, userType IAMUserType, isGroup bool, m map[string]MappedPolicy, basePrefix string) error {
 	var p MappedPolicy
 	err := getIAMConfig(&p, kv.value, string(kv.key))
 	if err != nil {
@@ -384,7 +383,7 @@ func getRedisMappedPolicy(ctx context.Context, kv redisKV, userType IAMUserType,
 	return nil
 }
 
-func (rd *IAMRedisStore) loadMappedPolicies(ctx context.Context, userType IAMUserType, isGroup bool, m map[string]MappedPolicy) error {
+func (rd *IAMKVStore) loadMappedPolicies(ctx context.Context, userType IAMUserType, isGroup bool, m map[string]MappedPolicy) error {
 	cctx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	var basePrefix string
@@ -402,7 +401,7 @@ func (rd *IAMRedisStore) loadMappedPolicies(ctx context.Context, userType IAMUse
 	}
 	// Retrieve all keys and values to avoid too many calls to etcd in case of
 	// a large number of policy mappings
-	r, err := keysPrefixRedis(cctx, rd.rdb, basePrefix, false)
+	r, err := rd.rdb.keysPrefixKV(cctx, basePrefix, false)
 	if err != nil {
 		return err
 	}
@@ -416,40 +415,40 @@ func (rd *IAMRedisStore) loadMappedPolicies(ctx context.Context, userType IAMUse
 	return nil
 }
 
-func (rd *IAMRedisStore) savePolicyDoc(ctx context.Context, policyName string, p PolicyDoc) error {
+func (rd *IAMKVStore) savePolicyDoc(ctx context.Context, policyName string, p PolicyDoc) error {
 	return rd.saveIAMConfig(ctx, &p, getPolicyDocPath(policyName))
 }
-func (rd *IAMRedisStore) saveMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool, mp MappedPolicy, opts ...options) error {
+func (rd *IAMKVStore) saveMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool, mp MappedPolicy, opts ...options) error {
 	return rd.saveIAMConfig(ctx, mp, getMappedPolicyPath(name, userType, isGroup), opts...)
 }
-func (rd *IAMRedisStore) saveUserIdentity(ctx context.Context, name string, userType IAMUserType, u UserIdentity, opts ...options) error {
+func (rd *IAMKVStore) saveUserIdentity(ctx context.Context, name string, userType IAMUserType, u UserIdentity, opts ...options) error {
 	return rd.saveIAMConfig(ctx, u, getUserIdentityPath(name, userType), opts...)
 }
-func (rd *IAMRedisStore) saveGroupInfo(ctx context.Context, group string, gi GroupInfo) error {
+func (rd *IAMKVStore) saveGroupInfo(ctx context.Context, group string, gi GroupInfo) error {
 	return rd.saveIAMConfig(ctx, gi, getGroupInfoPath(group))
 }
-func (rd *IAMRedisStore) deletePolicyDoc(ctx context.Context, policyName string) error {
+func (rd *IAMKVStore) deletePolicyDoc(ctx context.Context, policyName string) error {
 	err := rd.deleteIAMConfig(ctx, getPolicyDocPath(policyName))
 	if err == errConfigNotFound {
 		err = errNoSuchPolicy
 	}
 	return err
 }
-func (rd *IAMRedisStore) deleteMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool) error {
+func (rd *IAMKVStore) deleteMappedPolicy(ctx context.Context, name string, userType IAMUserType, isGroup bool) error {
 	err := rd.deleteIAMConfig(ctx, getMappedPolicyPath(name, userType, isGroup))
 	if err == errConfigNotFound {
 		err = errNoSuchPolicy
 	}
 	return err
 }
-func (rd *IAMRedisStore) deleteUserIdentity(ctx context.Context, name string, userType IAMUserType) error {
+func (rd *IAMKVStore) deleteUserIdentity(ctx context.Context, name string, userType IAMUserType) error {
 	err := rd.deleteIAMConfig(ctx, getUserIdentityPath(name, userType))
 	if err == errConfigNotFound {
 		err = errNoSuchUser
 	}
 	return err
 }
-func (rd *IAMRedisStore) deleteGroupInfo(ctx context.Context, name string) error {
+func (rd *IAMKVStore) deleteGroupInfo(ctx context.Context, name string) error {
 	err := rd.deleteIAMConfig(ctx, getGroupInfoPath(name))
 	if err == errConfigNotFound {
 		err = errNoSuchGroup
