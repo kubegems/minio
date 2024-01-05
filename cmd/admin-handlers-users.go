@@ -1095,7 +1095,7 @@ func (a adminAPIHandlers) AccountInfoHandler(w http.ResponseWriter, r *http.Requ
 
 	var dataUsageInfo DataUsageInfo
 	var err error
-	if !globalIsGateway {
+	if !globalIsGateway || (globalIsGateway && globalGatewayName == JuiceFSGateway) {
 		// Load the latest calculated data usage
 		dataUsageInfo, _ = loadDataUsageFromBackend(ctx, objectAPI)
 	}
@@ -1385,7 +1385,7 @@ func (a adminAPIHandlers) AddCannedPolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	iamPolicyBytes, err := ioutil.ReadAll(io.LimitReader(r.Body, r.ContentLength))
+	iamPolicyBytes, err := io.ReadAll(io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return

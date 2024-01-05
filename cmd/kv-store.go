@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -41,14 +42,80 @@ func RegisterTikvStore(client *tikv.KVStore) {
 }
 
 func (t *TikvStore) GetObjectNInfo(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (reader *GetObjectReader, err error) {
-	return
+	if err = checkGetObjArgs(ctx, bucket, object); err != nil {
+		return nil, err
+	}
+	nsUnlocker := func() {}
+	if lockType != noLock {
+		// Lock the object before reading.
+		lock := t.nsMutex.NewNSLock(nil, bucket, object)
+		switch lockType {
+		case writeLock:
+			lkctx, err := lock.GetLock(ctx, globalOperationTimeout)
+			if err != nil {
+				return nil, err
+			}
+			ctx = lkctx.Context()
+			nsUnlocker = func() { lock.Unlock(lkctx.Cancel) }
+		case readLock:
+			lkctx, err := lock.GetRLock(ctx, globalOperationTimeout)
+			if err != nil {
+				return nil, err
+			}
+			ctx = lkctx.Context()
+			nsUnlocker = func() { lock.RUnlock(lkctx.Cancel) }
+		}
+	}
+	var data []byte
+	data, err = t.ReadKeyKV(ctx, pathJoin(bucket, object))
+	if err != nil {
+		nsUnlocker()
+		if tikverr.IsErrNotFound(err) {
+			return nil, ObjectNotFound{Bucket: bucket, Object: object}
+		}
+		return nil, err
+	}
+	return NewGetObjectReaderFromReader(bytes.NewBuffer(data), ObjectInfo{
+		Bucket: bucket,
+		Name:   object,
+	}, opts, nsUnlocker)
 }
 
 func (t *TikvStore) PutObject(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error) {
-	return
+	if err = checkGetObjArgs(ctx, bucket, object); err != nil {
+		return ObjectInfo{}, err
+	}
+	lk := t.nsMutex.NewNSLock(nil, bucket, object)
+	lkctx, err := lk.GetLock(ctx, globalOperationTimeout)
+	if err != nil {
+		return objInfo, err
+	}
+	ctx = lkctx.Context()
+	defer lk.Unlock(lkctx.Cancel)
+	rd, err := io.ReadAll(data.Reader)
+	if err != nil {
+		return objInfo, err
+	}
+	return ObjectInfo{
+		Bucket: bucket,
+		Name:   object,
+	}, t.SaveKeyKV(ctx, pathJoin(bucket, object), rd)
 }
 func (t *TikvStore) DeleteObject(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
-	return ObjectInfo{}, nil
+	lk := t.nsMutex.NewNSLock(nil, bucket, object)
+	lkctx, err := lk.GetLock(ctx, globalOperationTimeout)
+	if err != nil {
+		return ObjectInfo{}, err
+	}
+	ctx = lkctx.Context()
+	defer lk.Unlock(lkctx.Cancel)
+	if err = checkDelObjArgs(ctx, bucket, object); err != nil {
+		return ObjectInfo{}, err
+	}
+	return ObjectInfo{
+		Bucket: bucket,
+		Name:   object,
+	}, t.DeleteKeyKV(ctx, pathJoin(bucket, object))
 }
 
 func (t *TikvStore) txn(ctx context.Context, f func(*tikv.KVTxn) error) error {
@@ -119,7 +186,7 @@ func (t *TikvStore) KeysPrefixKV(ctx context.Context, prefix string, keysOnly bo
 		if err != nil {
 			return err
 		}
-		for iter.Valid() {
+		for iter.Valid(); ; iter.Next() {
 			if keysOnly {
 				keys = append(keys, kv{
 					key:   string(iter.Key()),
@@ -131,9 +198,8 @@ func (t *TikvStore) KeysPrefixKV(ctx context.Context, prefix string, keysOnly bo
 				key:   string(iter.Key()),
 				value: iter.Value(),
 			})
-			iter.Next()
+
 		}
-		return nil
 	})
 	return keys, err
 }

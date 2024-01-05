@@ -105,10 +105,6 @@ func (sys *BucketQuotaSys) enforceQuotaHard(ctx context.Context, bucket string, 
 	if err != nil {
 		return err
 	}
-	//前置拦截
-	if q != nil && uint64(size) > q.Quota {
-		return BucketQuotaExceeded{Bucket: bucket}
-	}
 
 	if q != nil && q.Type == madmin.HardQuota && q.Quota > 0 {
 		bui, err := sys.GetBucketUsageInfo(bucket)
