@@ -58,7 +58,7 @@ func (sys *BucketQuotaSys) Init(objAPI ObjectLayer) {
 		sys.bucketStorageCache.Update = func() (interface{}, error) {
 			ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
 			defer done()
-
+			//从元数据引擎中获取bucket的使用情况
 			return loadDataUsageFromBackend(ctx, objAPI)
 		}
 	})
@@ -104,6 +104,10 @@ func (sys *BucketQuotaSys) enforceQuotaHard(ctx context.Context, bucket string, 
 	q, err := sys.Get(ctx, bucket)
 	if err != nil {
 		return err
+	}
+	//前置拦截
+	if q != nil && uint64(size) > q.Quota {
+		return BucketQuotaExceeded{Bucket: bucket}
 	}
 
 	if q != nil && q.Type == madmin.HardQuota && q.Quota > 0 {

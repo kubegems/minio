@@ -53,6 +53,22 @@ func storeDataUsageInBackend(ctx context.Context, objAPI ObjectLayer, dui <-chan
 	}
 }
 
+// StorageUsageToMetaEngin - Gateway调用写入使用信息到元数据引擎
+func StorageUsageToMetaEngin(ctx context.Context, dui <-chan DataUsageInfo) {
+	api := newObjectLayerFn().GetMetaStore()
+	for dataUsageInfo := range dui {
+		json := jsoniter.ConfigCompatibleWithStandardLibrary
+		dataUsageJSON, err := json.Marshal(dataUsageInfo)
+		if err != nil {
+			logger.LogIf(ctx, err)
+			continue
+		}
+		if err = saveConfig(ctx, api, dataUsageObjNamePath, dataUsageJSON); err != nil {
+			logger.LogIf(ctx, err)
+		}
+	}
+}
+
 // loadPrefixUsageFromBackend returns prefix usages found in passed buckets
 //
 //	e.g.:  /testbucket/prefix => 355601334
