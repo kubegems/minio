@@ -6,7 +6,7 @@ GOARCH := $(shell go env GOARCH)
 GOOS := $(shell go env GOOS)
 
 VERSION ?= $(shell git describe --tags)
-TAG ?= "minio/minio:$(VERSION)"
+TAG ?= "minio/minio:0.0.1"
 
 all: build
 
@@ -82,11 +82,11 @@ verify-healing: ## verify healing and replacing disks with minio binary
 	@(env bash $(PWD)/buildscripts/verify-healing.sh)
 	@(env bash $(PWD)/buildscripts/unaligned-healing.sh)
 
-build: checks ## builds minio to $(PWD)
+build: checks## builds minio to $(PWD)
 	@echo "Building minio binary to './minio'"
-	@CGO_ENABLED=1 go build -tags kqueue -trimpath --ldflags "$(LDFLAGS)" -o $(PWD)/minio 1>/dev/null
+	@CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=x86_64-linux-musl-gcc  CXX=x86_64-linux-musl-g++ go build -tags kqueue -trimpath --ldflags "$(LDFLAGS)" -o $(PWD)/minio 1>/dev/null
 
-build-ceph: checks ## builds minio to $(PWD)
+build-ceph:	checks ## builds minio to $(PWD)
 	@echo "Building minio binary to './minio'"
 	@CGO_ENABLED=1 go build -tags "kqueue ceph" -trimpath --ldflags "$(LDFLAGS)" -o $(PWD)/minio 1>/dev/null
 
@@ -117,9 +117,9 @@ docker-hotfix: hotfix-push checks ## builds minio docker container with hotfix t
 	@echo "Building minio docker image '$(TAG)'"
 	@docker build -q --no-cache -t $(TAG) --build-arg RELEASE=$(VERSION) . -f Dockerfile.hotfix
 
-docker: build checks ## builds minio docker container
+docker: build ## builds minio docker container
 	@echo "Building minio docker image '$(TAG)'"
-	docker build --no-cache -t $(TAG) . -f Dockerfile --load
+	docker buildx build --platform linux/amd64 --no-cache -t $(TAG) . -f Dockerfile --load
 
 install: build ## builds minio and installs it to $GOPATH/bin.
 	@echo "Installing minio binary to '$(GOPATH)/bin/minio'"
