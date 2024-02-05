@@ -671,6 +671,7 @@ func bucketPath(p ...string) string {
 }
 
 func runScanner(f *fs.FileSystem, usage chan<- minio.DataUsageInfo) error {
+	logger.Infof("start scanner for usage")
 	defer close(usage)
 	ctx := meta.NewContext(uint32(os.Getpid()), uint32(os.Getuid()), []uint32{uint32(os.Getgid())})
 	dirs, eno := f.Open(ctx, sep, 0)
@@ -679,7 +680,7 @@ func runScanner(f *fs.FileSystem, usage chan<- minio.DataUsageInfo) error {
 	}
 	defer dirs.Close(ctx)
 
-	entries, eno := dirs.Readdir(ctx, 10000)
+	entries, eno := dirs.Readdir(ctx, 0)
 	if eno != 0 {
 		return jfsToObjectErr(ctx, eno)
 	}
@@ -700,7 +701,7 @@ func runScanner(f *fs.FileSystem, usage chan<- minio.DataUsageInfo) error {
 		BucketsUsage: make(map[string]minio.BucketUsageInfo),
 	}
 	for _, entry := range entries {
-		if entry.IsDir() && !strings.Contains(entry.Name(), "sys") {
+		if entry.IsDir() && entry.Name() != metaBucket {
 			du.BucketsCount++
 			s, err := fnSummary(bucketPath(mpName, entry.Name()))
 			if err != nil {
@@ -718,5 +719,6 @@ func runScanner(f *fs.FileSystem, usage chan<- minio.DataUsageInfo) error {
 	}
 	du.LastUpdate = time.Now()
 	usage <- du
+	logger.Infof("end scanner for usage")
 	return nil
 }

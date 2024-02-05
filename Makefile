@@ -6,7 +6,8 @@ GOARCH := $(shell go env GOARCH)
 GOOS := $(shell go env GOOS)
 
 VERSION ?= $(shell git describe --tags)
-TAG ?= "minio/minio:0.0.1"
+##TAG ?= minio/minio-$(GOARCH):0.0.2
+TAG ?= minio/minio-amd64:0.0.2
 
 all: build
 
@@ -90,6 +91,10 @@ build-ceph:	checks ## builds minio to $(PWD)
 	@echo "Building minio binary to './minio'"
 	@CGO_ENABLED=1 go build -tags "kqueue ceph" -trimpath --ldflags "$(LDFLAGS)" -o $(PWD)/minio 1>/dev/null
 
+build-arm:
+	@echo "Building minio binary to './minio'"
+	@CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC=aarch64-linux-musl-gcc  CXX=aarch64-linux-musl-g++ go build -tags kqueue -trimpath  -o $(PWD)/minio 1>/dev/null
+
 s3-gateway-test: checks
 	@echo "Running s3gateway tests"
 	@(env bash $(PWD)/cmd/gateway/s3gateway_test.sh)
@@ -120,6 +125,10 @@ docker-hotfix: hotfix-push checks ## builds minio docker container with hotfix t
 docker: build ## builds minio docker container
 	@echo "Building minio docker image '$(TAG)'"
 	docker buildx build --platform linux/amd64 --no-cache -t $(TAG) . -f Dockerfile --load
+
+docker-arm: build-arm
+	@echo "Building minio docker image '$(TAG)'"
+	docker buildx build --platform linux/arm64 --no-cache -t $(TAG) . -f Dockerfile --load
 
 install: build ## builds minio and installs it to $GOPATH/bin.
 	@echo "Installing minio binary to '$(GOPATH)/bin/minio'"

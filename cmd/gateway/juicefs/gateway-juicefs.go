@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -220,7 +221,7 @@ func (n *JfsObjects) GetMetaStore() minio.ObjectIO {
 
 // scannerDataUsageInBackend - 扫描后端桶的使用情况，并作为Bucket的quota信息
 func (n *JfsObjects) scannerDataUsageInBackend(ctx context.Context) {
-	//r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	time.Sleep(time.Second) // 等待globalBucketQuotaSys初始化完成
 	for {
 		usage := make(chan minio.DataUsageInfo, 1)
@@ -229,7 +230,7 @@ func (n *JfsObjects) scannerDataUsageInBackend(ctx context.Context) {
 		if err := runScanner(n.fs, usage); err != nil {
 			logger.Errorf("run scanner error: %s", err)
 		}
-		time.Sleep(10 * time.Second)
+		time.Sleep(time.Duration(10+r.Intn(10)) * time.Second)
 	}
 }
 
