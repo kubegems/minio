@@ -153,6 +153,9 @@ func (n *JfsObjects) IsNotificationSupported() bool {
 }
 
 func initIAMStore(addr string) {
+	if !strings.Contains(addr, "://") {
+		addr = "redis://" + addr
+	}
 	p := strings.Index(addr, "://")
 	if p < 0 {
 		logger.Fatalf("invalid uri: %s", addr)
