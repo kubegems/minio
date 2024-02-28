@@ -28,8 +28,8 @@ import (
 )
 
 type BucketStatInfoCount struct {
-	s3InputBytes   BucketConnStats
-	s3RequestCount HTTPAPIStats
+	S3InputBytes   BucketConnStats
+	S3RequestCount HTTPAPIStats
 }
 
 // BucketConnStats - 统计桶的入口流量
@@ -52,7 +52,7 @@ func (b *BucketConnStats) getBucketStats(bucket string) uint64 {
 	return b.bucketStats[bucket]
 }
 
-func (b *BucketConnStats) load() map[string]uint64 {
+func (b *BucketConnStats) Load() map[string]uint64 {
 	b.RLock()
 	defer b.RUnlock()
 	bucketStats := make(map[string]uint64, len(b.bucketStats))
@@ -66,10 +66,10 @@ func newBucketStatInfoCount() *BucketStatInfoCount {
 	return &BucketStatInfoCount{}
 }
 
-func (b *BucketStatInfoCount) To(bucket string) (uint64, int) {
-	return b.s3InputBytes.getBucketStats(bucket), b.s3RequestCount.Get(bucket)
+// func (b *BucketStatInfoCount) To(bucket string) (uint64, int) {
+// 	return b.s3InputBytes.getBucketStats(bucket), b.s3RequestCount.Get(bucket)
 
-}
+// }
 
 // ConnStats - Network statistics
 // Count total input/output transferred bytes during

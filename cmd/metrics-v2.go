@@ -44,24 +44,24 @@ var (
 
 func init() {
 	clusterMetricsGroups := []*MetricsGroup{
-		getBucketUsageMetrics(),
-		getMinioHealingMetrics(),
-		getNodeHealthMetrics(),
-		getClusterStorageMetrics(),
-		getClusterTierMetrics(),
+		// getBucketUsageMetrics(),
+		// getMinioHealingMetrics(),
+		// getNodeHealthMetrics(),
+		// getClusterStorageMetrics(),
+		// getClusterTierMetrics(),
 	}
 
 	peerMetricsGroups = []*MetricsGroup{
-		getCacheMetrics(),
-		getGoMetrics(),
-		getHTTPMetrics(),
-		getLocalStorageMetrics(),
-		getMinioProcMetrics(),
-		getMinioVersionMetrics(),
-		getNetworkMetrics(),
-		getS3TTFBMetric(),
-		getILMNodeMetrics(),
-		getScannerNodeMetrics(),
+		// getCacheMetrics(),
+		// getGoMetrics(),
+		// getHTTPMetrics(),
+		// getLocalStorageMetrics(),
+		// getMinioProcMetrics(),
+		// getMinioVersionMetrics(),
+		// getNetworkMetrics(),
+		// getS3TTFBMetric(),
+		// getILMNodeMetrics(),
+		// getScannerNodeMetrics(),
 		getBucketS3RequestCounterMetrics(),
 		getBucketS3BytesCounterMetrics(),
 	}
@@ -1547,7 +1547,7 @@ func getBucketS3RequestCounterMetrics() *MetricsGroup {
 	mg := &MetricsGroup{}
 	mg.RegisterRead(func(ctx context.Context) (metrics []Metric) {
 
-		api := globalBucketStatInfoCount.s3RequestCount.Load()
+		api := GlobalBucketStatInfoCount.S3RequestCount.Load()
 		metrics = make([]Metric, 0, len(api))
 		for k, v := range api {
 			metrics = append(metrics, Metric{
@@ -1564,7 +1564,7 @@ func getBucketS3RequestCounterMetrics() *MetricsGroup {
 func getBucketS3BytesCounterMetrics() *MetricsGroup {
 	mg := &MetricsGroup{}
 	mg.RegisterRead(func(ctx context.Context) (metrics []Metric) {
-		api := globalBucketStatInfoCount.s3InputBytes.load()
+		api := GlobalBucketStatInfoCount.S3InputBytes.Load()
 		metrics = make([]Metric, 0, len(api))
 		for k, v := range api {
 			metrics = append(metrics, Metric{

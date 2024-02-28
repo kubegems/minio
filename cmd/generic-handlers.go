@@ -280,8 +280,8 @@ func setHTTPStatsHandler(h http.Handler) http.Handler {
 
 		bucketName, _ := request2BucketObjectName(r)
 		if bucketName != "" {
-			globalBucketStatInfoCount.s3InputBytes.incBucketStats(bucketName, meteredRequest.BytesRead())
-			globalBucketStatInfoCount.s3RequestCount.Inc(bucketName)
+			GlobalBucketStatInfoCount.S3InputBytes.incBucketStats(bucketName, meteredRequest.BytesRead())
+			GlobalBucketStatInfoCount.S3RequestCount.Inc(bucketName)
 		}
 
 		// if strings.HasPrefix(r.URL.Path, minioReservedBucketPath) {

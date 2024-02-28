@@ -96,7 +96,25 @@ func wrapRegister(mp, name string) (prometheus.Registerer, *prometheus.Registry)
 		prometheus.WrapRegistererWith(prometheus.Labels{"mp": mp, "vol_name": name}, registry))
 	registerer.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	registerer.MustRegister(collectors.NewGoCollector())
+	registerer.MustRegister(&s3bucketCollector{})
 	return registerer, registry
+}
+
+type s3bucketCollector struct{}
+
+func (s *s3bucketCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil)
+	ch <- prometheus.NewDesc("s3_input_bytes", "Total number of bytes transferred to S3", []string{"bucket"}, nil)
+}
+func (s *s3bucketCollector) Collect(ch chan<- prometheus.Metric) {
+	bts := minio.GlobalBucketStatInfoCount.S3InputBytes.Load()
+	for k, v := range bts {
+		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("s3_input_bytes", "Total number of bytes transferred to S3", []string{"bucket"}, nil), prometheus.CounterValue, float64(v), k)
+	}
+	rts := minio.GlobalBucketStatInfoCount.S3RequestCount.Load()
+	for k, v := range rts {
+		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil), prometheus.CounterValue, float64(v), k)
+	}
 }
 
 func exposeMetrics(c *cli.Context, m meta.Meta, registerer prometheus.Registerer, registry *prometheus.Registry) string {
