@@ -233,6 +233,8 @@ var (
 	// Global server's network statistics
 	globalConnStats = newConnStats()
 
+	globalBucketStatInfoCount = newBucketStatInfoCount()
+
 	// Global HTTP request statisitics
 	globalHTTPStats = newHTTPStats()
 

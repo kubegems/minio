@@ -27,6 +27,50 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+type BucketStatInfoCount struct {
+	s3InputBytes   BucketConnStats
+	s3RequestCount HTTPAPIStats
+}
+
+// BucketConnStats - 统计桶的入口流量
+type BucketConnStats struct {
+	bucketStats map[string]uint64
+	sync.RWMutex
+}
+
+func (b *BucketConnStats) incBucketStats(bucket string, n int64) {
+	b.Lock()
+	defer b.Unlock()
+	if b.bucketStats == nil {
+		b.bucketStats = make(map[string]uint64)
+	}
+	b.bucketStats[bucket] += uint64(n)
+}
+func (b *BucketConnStats) getBucketStats(bucket string) uint64 {
+	b.RLock()
+	defer b.RUnlock()
+	return b.bucketStats[bucket]
+}
+
+func (b *BucketConnStats) load() map[string]uint64 {
+	b.RLock()
+	defer b.RUnlock()
+	bucketStats := make(map[string]uint64, len(b.bucketStats))
+	for k, v := range b.bucketStats {
+		bucketStats[k] = v
+	}
+	return bucketStats
+}
+
+func newBucketStatInfoCount() *BucketStatInfoCount {
+	return &BucketStatInfoCount{}
+}
+
+func (b *BucketStatInfoCount) To(bucket string) (uint64, int) {
+	return b.s3InputBytes.getBucketStats(bucket), b.s3RequestCount.Get(bucket)
+
+}
+
 // ConnStats - Network statistics
 // Count total input/output transferred bytes during
 // the server's life.
@@ -122,6 +166,15 @@ func (stats *HTTPAPIStats) Dec(api string) {
 	if val, ok := stats.apiStats[api]; ok && val > 0 {
 		stats.apiStats[api]--
 	}
+}
+
+func (stats *HTTPAPIStats) Get(api string) int {
+	if stats == nil {
+		return 0
+	}
+	stats.Lock()
+	defer stats.Unlock()
+	return stats.apiStats[api]
 }
 
 // Load returns the recorded stats.

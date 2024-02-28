@@ -62,6 +62,8 @@ func init() {
 		getS3TTFBMetric(),
 		getILMNodeMetrics(),
 		getScannerNodeMetrics(),
+		getBucketS3RequestCounterMetrics(),
+		getBucketS3BytesCounterMetrics(),
 	}
 
 	allMetricsGroups := func() (allMetrics []*MetricsGroup) {
@@ -134,6 +136,8 @@ const (
 	healTotal      MetricName = "heal_total"
 	hitsTotal      MetricName = "hits_total"
 	inflightTotal  MetricName = "inflight_total"
+	allTotal       MetricName = "all_total"
+	bytesTotal     MetricName = "bytes_total"
 	invalidTotal   MetricName = "invalid_total"
 	limitTotal     MetricName = "limit_total"
 	missedTotal    MetricName = "missed_total"
@@ -563,6 +567,26 @@ func getS3RequestsInFlightMD() MetricDescription {
 		Name:      inflightTotal,
 		Help:      "Total number of S3 requests currently in flight",
 		Type:      gaugeMetric,
+	}
+}
+
+func getBucketS3RequestsTotalMD() MetricDescription {
+	return MetricDescription{
+		Namespace: s3MetricNamespace,
+		Subsystem: requestsSubsystem,
+		Name:      allTotal,
+		Help:      "Total number of S3 bucket requests in total",
+		Type:      counterMetric,
+	}
+}
+
+func getBucketS3InputBytesMD() MetricDescription {
+	return MetricDescription{
+		Namespace: s3MetricNamespace,
+		Subsystem: requestsSubsystem,
+		Name:      bytesTotal,
+		Help:      "Total number of S3 bucket bytes in total",
+		Type:      counterMetric,
 	}
 }
 
@@ -1517,6 +1541,42 @@ func getNetworkMetrics() *MetricsGroup {
 		return
 	})
 	return mg
+}
+
+func getBucketS3RequestCounterMetrics() *MetricsGroup {
+	mg := &MetricsGroup{}
+	mg.RegisterRead(func(ctx context.Context) (metrics []Metric) {
+
+		api := globalBucketStatInfoCount.s3RequestCount.Load()
+		metrics = make([]Metric, 0, len(api))
+		for k, v := range api {
+			metrics = append(metrics, Metric{
+				Description:    getBucketS3RequestsTotalMD(),
+				Value:          float64(v),
+				VariableLabels: map[string]string{"bucket": k},
+			})
+		}
+		return
+	})
+	return mg
+}
+
+func getBucketS3BytesCounterMetrics() *MetricsGroup {
+	mg := &MetricsGroup{}
+	mg.RegisterRead(func(ctx context.Context) (metrics []Metric) {
+		api := globalBucketStatInfoCount.s3InputBytes.load()
+		metrics = make([]Metric, 0, len(api))
+		for k, v := range api {
+			metrics = append(metrics, Metric{
+				Description:    getBucketS3InputBytesMD(),
+				Value:          float64(v),
+				VariableLabels: map[string]string{"bucket": k},
+			})
+		}
+		return
+	})
+	return mg
+
 }
 
 func getBucketUsageMetrics() *MetricsGroup {

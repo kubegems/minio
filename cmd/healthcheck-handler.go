@@ -19,8 +19,10 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	xhttp "github.com/minio/minio/internal/http"
@@ -102,6 +104,22 @@ func ClusterReadCheckHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeResponse(w, http.StatusOK, nil, mimeNone)
+}
+
+func GetBucketCounterHandler(w http.ResponseWriter, r *http.Request) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		writeResponse(w, http.StatusBadRequest, nil, mimeNone)
+		return
+	}
+	bucket := query.Get("bucket")
+	inputBytes, count := globalBucketStatInfoCount.To(bucket)
+	w.Header().Set("Content-Type", string(mimeJSON))
+	enc := json.NewEncoder(w)
+	if err := enc.Encode(map[string]interface{}{"inputBytes": inputBytes, "s3Requestcount": count}); err != nil {
+		writeResponse(w, http.StatusInternalServerError, nil, mimeNone)
+		return
+	}
 }
 
 // ReadinessCheckHandler Checks if the process is up. Always returns success.

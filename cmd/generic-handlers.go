@@ -278,13 +278,19 @@ func setHTTPStatsHandler(h http.Handler) http.Handler {
 		r.Body = meteredRequest
 		h.ServeHTTP(meteredResponse, r)
 
-		if strings.HasPrefix(r.URL.Path, minioReservedBucketPath) {
-			globalConnStats.incInputBytes(meteredRequest.BytesRead())
-			globalConnStats.incOutputBytes(meteredResponse.BytesWritten())
-		} else {
-			globalConnStats.incS3InputBytes(meteredRequest.BytesRead())
-			globalConnStats.incS3OutputBytes(meteredResponse.BytesWritten())
+		bucketName, _ := request2BucketObjectName(r)
+		if bucketName != "" {
+			globalBucketStatInfoCount.s3InputBytes.incBucketStats(bucketName, meteredRequest.BytesRead())
+			globalBucketStatInfoCount.s3RequestCount.Inc(bucketName)
 		}
+
+		// if strings.HasPrefix(r.URL.Path, minioReservedBucketPath) {
+		// 	globalConnStats.incInputBytes(meteredRequest.BytesRead())
+		// 	globalConnStats.incOutputBytes(meteredResponse.BytesWritten())
+		// } else {
+		// 	globalConnStats.incS3InputBytes(meteredRequest.BytesRead())
+		// 	globalConnStats.incS3OutputBytes(meteredResponse.BytesWritten())
+		// }
 	})
 }
 

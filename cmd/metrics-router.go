@@ -46,7 +46,7 @@ const (
 func registerMetricsRouter(router *mux.Router) {
 	// metrics router
 	metricsRouter := router.NewRoute().PathPrefix(minioReservedBucketPath).Subrouter()
-	authType := strings.ToLower(env.Get(EnvPrometheusAuthType, string(prometheusJWT)))
+	authType := strings.ToLower(env.Get(EnvPrometheusAuthType, string(prometheusPublic)))
 	switch prometheusAuthType(authType) {
 	case prometheusPublic:
 		metricsRouter.Handle(prometheusMetricsPathLegacy, metricsHandler())

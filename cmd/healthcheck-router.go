@@ -29,7 +29,8 @@ const (
 	healthCheckReadinessPath   = "/ready"
 	healthCheckClusterPath     = "/cluster"
 	healthCheckClusterReadPath = "/cluster/read"
-	healthCheckPathPrefix      = minioReservedBucketPath + healthCheckPath
+	//healthCheckClusterBucketCountPath = "/cluster/bucket-count"
+	healthCheckPathPrefix = minioReservedBucketPath + healthCheckPath
 )
 
 // registerHealthCheckRouter - add handler functions for liveness and readiness routes.
@@ -42,6 +43,7 @@ func registerHealthCheckRouter(router *mux.Router) {
 	healthRouter.Methods(http.MethodHead).Path(healthCheckClusterPath).HandlerFunc(httpTraceAll(ClusterCheckHandler))
 	healthRouter.Methods(http.MethodGet).Path(healthCheckClusterReadPath).HandlerFunc(httpTraceAll(ClusterReadCheckHandler))
 	healthRouter.Methods(http.MethodHead).Path(healthCheckClusterReadPath).HandlerFunc(httpTraceAll(ClusterReadCheckHandler))
+	//healthRouter.Methods(http.MethodGet).Path(healthCheckClusterBucketCountPath).HandlerFunc(httpTraceAll(GetBucketCounterHandler))
 
 	// Liveness handler
 	healthRouter.Methods(http.MethodGet).Path(healthCheckLivenessPath).HandlerFunc(httpTraceAll(LivenessCheckHandler))
