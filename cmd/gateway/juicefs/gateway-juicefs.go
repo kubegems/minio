@@ -187,7 +187,9 @@ func initIAMStore(addr string) {
 		if err != nil {
 			logger.Fatalf("tikv init failed %s: %s", addr, err)
 		}
-		minio.RegisterTikvStore(client.KVStore)
+		//添加前缀区分
+		prefix := strings.TrimLeft(u.Path, "/")
+		minio.RegisterTikvStore(client.KVStore, append([]byte(prefix), 0xFD))
 
 	default:
 		logger.Infof("current not support %s,use memory IAM store", driverType)

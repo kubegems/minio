@@ -32,13 +32,26 @@ type KvStore interface {
 type TikvStore struct {
 	nsMutex *nsLockMap
 	client  *tikv.KVStore
+	prefix  []byte
 }
 
-func RegisterTikvStore(client *tikv.KVStore) {
+func RegisterTikvStore(client *tikv.KVStore, prefix []byte) {
 	GlobalKVClient = &TikvStore{
 		client:  client,
 		nsMutex: newNSLock(false),
+		prefix:  prefix,
 	}
+}
+
+func (t *TikvStore) realKey(key string) []byte {
+	k := make([]byte, len(t.prefix)+len(key))
+	copy(k, t.prefix)
+	copy(k[len(t.prefix):], []byte(key))
+	return k
+}
+
+func (t *TikvStore) originKey(key []byte) string {
+	return string(key[len(t.prefix):])
 }
 
 func (t *TikvStore) GetObjectNInfo(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (reader *GetObjectReader, err error) {
@@ -149,7 +162,7 @@ func (t *TikvStore) SaveKeyKVWithTTL(ctx context.Context, key string, data []byt
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	return t.txn(timeoutCtx, func(tx *tikv.KVTxn) error {
-		return tx.Set([]byte(key), data)
+		return tx.Set(t.realKey(key), data)
 	})
 
 }
@@ -160,7 +173,7 @@ func (t *TikvStore) DeleteKeyKV(ctx context.Context, key string) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
 	return t.txn(timeoutCtx, func(tx *tikv.KVTxn) error {
-		return tx.Delete([]byte(key))
+		return tx.Delete(t.realKey(key))
 	})
 }
 func (t *TikvStore) ReadKeyKV(ctx context.Context, key string) ([]byte, error) {
@@ -171,7 +184,7 @@ func (t *TikvStore) ReadKeyKV(ctx context.Context, key string) ([]byte, error) {
 		err  error
 	)
 	err = t.txn(timeoutCtx, func(tx *tikv.KVTxn) error {
-		data, err = tx.Get(timeoutCtx, []byte(key))
+		data, err = tx.Get(timeoutCtx, t.realKey(key))
 		if err != nil {
 			return err
 		}
@@ -182,20 +195,20 @@ func (t *TikvStore) ReadKeyKV(ctx context.Context, key string) ([]byte, error) {
 func (t *TikvStore) KeysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error) {
 	var keys = make([]kv, 0)
 	err := t.txn(ctx, func(tx *tikv.KVTxn) error {
-		iter, err := tx.Iter([]byte(prefix), nil)
+		iter, err := tx.Iter(t.realKey(prefix), nil)
 		if err != nil {
 			return err
 		}
 		for iter.Valid(); ; iter.Next() {
 			if keysOnly {
 				keys = append(keys, kv{
-					key:   string(iter.Key()),
+					key:   t.originKey(iter.Key()),
 					value: nil,
 				})
 				continue
 			}
 			keys = append(keys, kv{
-				key:   string(iter.Key()),
+				key:   t.originKey(iter.Key()),
 				value: iter.Value(),
 			})
 

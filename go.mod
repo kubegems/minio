@@ -76,12 +76,14 @@ require (
 	github.com/prometheus/client_model v0.4.0
 	github.com/prometheus/procfs v0.9.0
 	github.com/pyroscope-io/client v0.7.2
+	github.com/redis/go-redis/v9 v9.0.2
 	github.com/rs/cors v1.7.0
 	github.com/rs/dnscache v0.0.0-20211102005908-e0241e321417
 	github.com/secure-io/sio-go v0.3.1
 	github.com/shirou/gopsutil/v3 v3.21.12
 	github.com/sirupsen/logrus v1.9.0
 	github.com/streadway/amqp v1.0.0
+	github.com/tikv/client-go/v2 v2.0.4
 	github.com/tinylib/msgp v1.1.7-0.20211026165309-e818a1881b0e
 	github.com/valyala/bytebufferpool v1.0.0
 	github.com/xdg/scram v0.0.0-20180814205039-7eeb5667e42c
@@ -263,7 +265,6 @@ require (
 	github.com/qingstor/qingstor-sdk-go/v4 v4.4.0 // indirect
 	github.com/qiniu/go-sdk/v7 v7.15.0 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
-	github.com/redis/go-redis/v9 v9.0.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/rjeczalik/notify v0.9.2 // indirect
@@ -278,7 +279,6 @@ require (
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/tidwall/sjson v1.2.3 // indirect
-	github.com/tikv/client-go/v2 v2.0.4 // indirect
 	github.com/tikv/pd/client v0.0.0-20221031025758-80f0d8ca4d07 // indirect
 	github.com/tklauser/go-sysconf v0.3.9 // indirect
 	github.com/tklauser/numcpus v0.3.0 // indirect

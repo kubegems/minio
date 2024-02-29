@@ -7,7 +7,7 @@ GOOS := $(shell go env GOOS)
 
 VERSION ?= $(shell git describe --tags)
 ##TAG ?= minio/minio-$(GOARCH):0.0.2
-TAG ?= minio/minio-arm64:v0.0.2-zk
+TAG ?= minio/minio-amd64:v0.0.2
 
 all: build
 
