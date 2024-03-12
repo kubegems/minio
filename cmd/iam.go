@@ -160,7 +160,7 @@ func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client, store 
 				sys.store = &IAMStoreSys{newIAMObjectStore(objAPI, sys.usersSysType)}
 			} else if store != nil {
 				sys.store = &IAMStoreSys{newIAMKVStore(store, sys.usersSysType)}
-				logger.Info("INFO: %s gateway is running redis IAM store", globalGatewayName)
+				logger.Info("INFO: %s gateway is running %s IAM store", globalGatewayName, store.Name())
 			} else {
 				sys.store = &IAMStoreSys{newIAMDummyStore(sys.usersSysType)}
 				logger.Info("WARNING: %s gateway is running in-memory IAM store, for persistence please configure etcd or redis",

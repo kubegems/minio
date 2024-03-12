@@ -41,10 +41,10 @@ import (
 	"github.com/minio/madmin-go"
 	minio "github.com/minio/minio/cmd"
 	"github.com/redis/go-redis/v9"
+	"github.com/tikv/client-go/v2/txnkv"
 
 	"github.com/juicedata/juicefs/pkg/vfs"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
-	"github.com/tikv/client-go/v2/txnkv"
 )
 
 const (
@@ -178,6 +178,7 @@ func initIAMStore(addr string) {
 		//opt.MaxRetries = -1 // Redis use -1 to disable retries
 		opt.MaxRetries = 10
 		minio.RegisterRedisStore(redis.NewClient(opt))
+		//minio.RegisterMemStore()
 	case "tikv":
 		u, err := url.Parse(addr)
 		if err != nil {
@@ -189,7 +190,8 @@ func initIAMStore(addr string) {
 		}
 		//添加前缀区分
 		prefix := strings.TrimLeft(u.Path, "/")
-		minio.RegisterTikvStore(client.KVStore, append([]byte(prefix), 0xFD))
+		minio.RegisterTikvStore(client, []byte(prefix))
+		//minio.RegisterMemStore()
 
 	default:
 		logger.Infof("current not support %s,use memory IAM store", driverType)

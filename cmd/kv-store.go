@@ -3,18 +3,19 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"time"
 
+	jlog "github.com/juicedata/juicefs/pkg/utils"
 	"github.com/redis/go-redis/v9"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv"
 )
 
 var _ KvStore = (*TikvStore)(nil)
 var _ KvStore = (*RedisStore)(nil)
+var kvLogger = jlog.GetLogger("juicefs")
 
 type kv struct {
 	key   string
@@ -27,15 +28,16 @@ type KvStore interface {
 	DeleteKeyKV(ctx context.Context, key string) error
 	ReadKeyKV(ctx context.Context, key string) ([]byte, error)
 	KeysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error)
+	Name() string
 }
 
 type TikvStore struct {
 	nsMutex *nsLockMap
-	client  *tikv.KVStore
+	client  *txnkv.Client
 	prefix  []byte
 }
 
-func RegisterTikvStore(client *tikv.KVStore, prefix []byte) {
+func RegisterTikvStore(client *txnkv.Client, prefix []byte) {
 	GlobalKVClient = &TikvStore{
 		client:  client,
 		nsMutex: newNSLock(false),
@@ -44,9 +46,10 @@ func RegisterTikvStore(client *tikv.KVStore, prefix []byte) {
 }
 
 func (t *TikvStore) realKey(key string) []byte {
-	k := make([]byte, len(t.prefix)+len(key))
+	bt := []byte(key)
+	k := make([]byte, len(t.prefix)+len(bt))
 	copy(k, t.prefix)
-	copy(k[len(t.prefix):], []byte(key))
+	copy(k[len(t.prefix):], bt)
 	return k
 }
 
@@ -54,7 +57,12 @@ func (t *TikvStore) originKey(key []byte) string {
 	return string(key[len(t.prefix):])
 }
 
+func (t *TikvStore) Name() string {
+	return "tikv"
+}
+
 func (t *TikvStore) GetObjectNInfo(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (reader *GetObjectReader, err error) {
+	kvLogger.Infof("GetObjectNInfo: bucket: %s, object: %s", bucket, object)
 	if err = checkGetObjArgs(ctx, bucket, object); err != nil {
 		return nil, err
 	}
@@ -95,6 +103,7 @@ func (t *TikvStore) GetObjectNInfo(ctx context.Context, bucket, object string, r
 }
 
 func (t *TikvStore) PutObject(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error) {
+	kvLogger.Infof("PutObject: bucket: %s, object: %s", bucket, object)
 	if err = checkGetObjArgs(ctx, bucket, object); err != nil {
 		return ObjectInfo{}, err
 	}
@@ -115,6 +124,7 @@ func (t *TikvStore) PutObject(ctx context.Context, bucket, object string, data *
 	}, t.SaveKeyKV(ctx, pathJoin(bucket, object), rd)
 }
 func (t *TikvStore) DeleteObject(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
+	kvLogger.Infof("DeleteObject: bucket: %s, object: %s", bucket, object)
 	lk := t.nsMutex.NewNSLock(nil, bucket, object)
 	lkctx, err := lk.GetLock(ctx, globalOperationTimeout)
 	if err != nil {
@@ -131,90 +141,73 @@ func (t *TikvStore) DeleteObject(ctx context.Context, bucket, object string, opt
 	}, t.DeleteKeyKV(ctx, pathJoin(bucket, object))
 }
 
-func (t *TikvStore) txn(ctx context.Context, f func(*tikv.KVTxn) error) error {
+func (t *TikvStore) SaveKeyKVWithTTL(ctx context.Context, key string, data []byte, ttl int64) error {
+	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
+	defer cancel()
 	tx, err := t.client.Begin()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			fe, ok := r.(error)
-			if ok {
-				err = fe
-			} else {
-				err = fmt.Errorf("tikv client txn func error: %v", r)
-			}
-		}
-	}()
-	if err = f(tx); err != nil {
+	err = tx.Set(t.realKey(key), data)
+	if err != nil {
 		return err
 	}
-	if !tx.IsReadOnly() {
-		tx.SetEnable1PC(true)
-		tx.SetEnableAsyncCommit(true)
-		err = tx.Commit(context.Background())
-	}
-	return err
-
-}
-
-func (t *TikvStore) SaveKeyKVWithTTL(ctx context.Context, key string, data []byte, ttl int64) error {
-	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
-	defer cancel()
-	return t.txn(timeoutCtx, func(tx *tikv.KVTxn) error {
-		return tx.Set(t.realKey(key), data)
-	})
-
+	return tx.Commit(timeoutCtx)
 }
 func (t *TikvStore) SaveKeyKV(ctx context.Context, key string, data []byte, opts ...options) error {
-	return t.SaveKeyKVWithTTL(ctx, key, data, opts[0].ttl)
+	if len(opts) > 0 {
+		return t.SaveKeyKVWithTTL(ctx, key, data, opts[0].ttl)
+	}
+	return t.SaveKeyKVWithTTL(ctx, key, data, 0)
 }
 func (t *TikvStore) DeleteKeyKV(ctx context.Context, key string) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
-	return t.txn(timeoutCtx, func(tx *tikv.KVTxn) error {
-		return tx.Delete(t.realKey(key))
-	})
+	tx, err := t.client.Begin()
+	if err != nil {
+		return err
+	}
+	err = tx.Delete(t.realKey(key))
+	if err != nil {
+		return err
+	}
+	return tx.Commit(timeoutCtx)
 }
 func (t *TikvStore) ReadKeyKV(ctx context.Context, key string) ([]byte, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, defaultContextTimeout)
 	defer cancel()
-	var (
-		data []byte
-		err  error
-	)
-	err = t.txn(timeoutCtx, func(tx *tikv.KVTxn) error {
-		data, err = tx.Get(timeoutCtx, t.realKey(key))
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	return data, err
+	tx, err := t.client.Begin()
+	if err != nil {
+		return nil, err
+	}
+	data, err := tx.Get(timeoutCtx, t.realKey(key))
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
-func (t *TikvStore) KeysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error) {
-	var keys = make([]kv, 0)
-	err := t.txn(ctx, func(tx *tikv.KVTxn) error {
-		iter, err := tx.Iter(t.realKey(prefix), nil)
-		if err != nil {
-			return err
-		}
-		for iter.Valid(); ; iter.Next() {
-			if keysOnly {
-				keys = append(keys, kv{
-					key:   t.originKey(iter.Key()),
-					value: nil,
-				})
-				continue
-			}
-			keys = append(keys, kv{
-				key:   t.originKey(iter.Key()),
-				value: iter.Value(),
-			})
 
+func (t *TikvStore) KeysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error) {
+	tx, err := t.client.Begin()
+	if err != nil {
+		return nil, err
+	}
+	iter, err := tx.Iter(t.realKey(prefix), nextKey(t.realKey(prefix)))
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+	var keys = make([]kv, 0)
+	for iter.Valid() {
+		keys = append(keys, kv{
+			key:   t.originKey(iter.Key()[:]),
+			value: iter.Value()[:],
+		})
+		if err = iter.Next(); err != nil {
+			break
 		}
-	})
-	return keys, err
+	}
+	return keys, nil
 }
 
 type RedisStore struct {
@@ -227,6 +220,10 @@ func RegisterRedisStore(client redis.UniversalClient) {
 		client:  client,
 		nsMutex: newNSLock(false),
 	}
+}
+
+func (r *RedisStore) Name() string {
+	return "redis"
 }
 
 func (r *RedisStore) GetObjectNInfo(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (reader *GetObjectReader, err error) {
