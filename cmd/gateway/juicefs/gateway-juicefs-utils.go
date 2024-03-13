@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/erikdubbelboer/gspt"
@@ -105,6 +106,8 @@ type s3bucketCollector struct{}
 func (s *s3bucketCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil)
 	ch <- prometheus.NewDesc("s3_input_bytes", "Total number of bytes transferred to S3", []string{"bucket"}, nil)
+	ch <- prometheus.NewDesc("total_bytes", "Total S3 storage bytes", []string{"bucket"}, nil)
+	ch <- prometheus.NewDesc("total_files", "Total S3 storage files", []string{"bucket"}, nil)
 }
 func (s *s3bucketCollector) Collect(ch chan<- prometheus.Metric) {
 	bts := minio.GlobalBucketStatInfoCount.S3InputBytes.Load()
@@ -114,6 +117,10 @@ func (s *s3bucketCollector) Collect(ch chan<- prometheus.Metric) {
 	rts := minio.GlobalBucketStatInfoCount.S3RequestCount.Load()
 	for k, v := range rts {
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil), prometheus.CounterValue, float64(v), k)
+	}
+	for k, v := range globalDataUsageInfo.getGlobalDataUsageInfo() {
+		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_bytes", "Total S3 storage bytes", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.Size), k)
+		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_files", "Total S3 storage files", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.ObjectsCount), k)
 	}
 }
 
@@ -732,11 +739,43 @@ func runScanner(f *fs.FileSystem, usage chan<- minio.DataUsageInfo) error {
 				Size:         s.Size,
 				ObjectsCount: s.Files,
 			}
-
+			globalDataUsageInfo.setGlobalDataUsageInfo(du.BucketsUsage)
 		}
 	}
 	du.LastUpdate = time.Now()
 	usage <- du
 	logger.Infof("end scanner for usage")
 	return nil
+}
+
+var globalDataUsageInfo = &dataUsageCacheMetrics{
+	usage: make(map[string]minio.BucketUsageInfo),
+}
+
+type dataUsageCacheMetrics struct {
+	sync.RWMutex
+	usage map[string]minio.BucketUsageInfo
+}
+
+func (d *dataUsageCacheMetrics) setGlobalDataUsageInfo(usage map[string]minio.BucketUsageInfo) {
+	d.Lock()
+	defer d.Unlock()
+	for k := range d.usage {
+		if _, ok := usage[k]; !ok {
+			delete(d.usage, k)
+		}
+	}
+	for k, v := range usage {
+		d.usage[k] = v
+	}
+}
+
+func (d *dataUsageCacheMetrics) getGlobalDataUsageInfo() map[string]minio.BucketUsageInfo {
+	d.RLock()
+	defer d.RUnlock()
+	ret := make(map[string]minio.BucketUsageInfo, len(d.usage))
+	for k, v := range d.usage {
+		ret[k] = v
+	}
+	return ret
 }
