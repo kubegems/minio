@@ -1,0 +1,35 @@
+# ceph auth get-key client.admin | base64
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ceph-secret
+  namespace: dev
+data:
+  key: QVFCK2RYeGZobWg0TFJBQU0zT3crWmRQNjRQeTFONVp2QmdLaUE9PQ==
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: myapp
+  namespace: dev
+spec:
+  containers:
+  - name: myapp
+    image: busybox
+    command: ["sleep", "60000"]
+    volumeMounts:
+    - mountPath: "/data"
+      name: cephfs	#指定使用的挂载卷名称
+  volumes:
+  - name: cephfs		#定义挂载卷名称
+    cephfs:  #挂载类型为cephFS
+      monitors:
+      - 192.168.240.97:6789	#ceph集群mon节点
+      user: admin	#ceph认证用户
+      path: /volumes/csi/
+      secretRef:
+        name: ceph-secret  #调用ceph认证secret
+
+  

@@ -341,12 +341,12 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 	verifyObjectLayerFeatures("gateway "+gatewayName, newObject)
 
 	// Check for updates in non-blocking manner.
-	go func() {
-		if !globalCLIContext.Quiet && !globalInplaceUpdateDisabled {
-			// Check for new updates from dl.min.io.
-			checkUpdate(getMinioMode())
-		}
-	}()
+	// go func() {
+	// 	if !globalCLIContext.Quiet && !globalInplaceUpdateDisabled {
+	// 		// Check for new updates from dl.min.io.
+	// 		checkUpdate(getMinioMode())
+	// 	}
+	// }()
 
 	if !globalCLIContext.Quiet {
 		// Print gateway startup message.
