@@ -18,7 +18,9 @@
 package cmd
 
 import (
+	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -87,6 +89,11 @@ func MkdirAll(dirPath string, mode os.FileMode) error {
 // Rename captures time taken to call os.Rename
 func Rename(src, dst string) error {
 	defer updateOSMetrics(osMetricRename, src, dst)()
+	//由于golang rename调用的是renameat2的系统调用，导致跨文件系统时会出现invalid cross-device link错误
+	//所以，这里针对cephfs采用io.Copy代替os.Rename
+	if globalIsGateway && globalGatewayName == CephFSGateway {
+		return crossFSRename(src, dst)
+	}
 	return os.Rename(src, dst)
 }
 
@@ -132,4 +139,93 @@ func Remove(deletePath string) error {
 func Stat(name string) (os.FileInfo, error) {
 	defer updateOSMetrics(osMetricStat, name)()
 	return os.Stat(name)
+}
+
+// isDir checks if the given path is a directory.
+func isDir(path string) bool {
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return fileInfo.IsDir()
+}
+
+// crossFSRename 实现跨文件系统的重命名操作，支持文件和目录。
+func crossFSRename(oldPath, newPath string) error {
+	if isDir(oldPath) {
+		// 是目录，则执行目录的复制+删除操作
+		return crossFSMoveDir(oldPath, newPath)
+	}
+	return crossFSMoveFile(oldPath, newPath)
+}
+
+// crossFSMoveFile 用于跨文件系统移动文件。
+func crossFSMoveFile(oldPath, newPath string) error {
+	srcFile, err := os.Open(oldPath)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	dstFile, err := os.Create(newPath)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	_, err = io.Copy(dstFile, srcFile)
+	if err != nil {
+		return err
+	}
+
+	return os.Remove(oldPath)
+}
+
+// crossFSMoveDir 用于跨文件系统移动目录。
+func crossFSMoveDir(oldPath, newPath string) error {
+	// 创建目标目录
+	err := os.MkdirAll(newPath, 0755)
+	if err != nil {
+		return err
+	}
+
+	// 遍历并复制目录内容
+	err = filepath.Walk(oldPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relativePath, err := filepath.Rel(oldPath, path)
+		if err != nil {
+			return err
+		}
+
+		destPath := filepath.Join(newPath, relativePath)
+
+		if info.IsDir() {
+			// 创建对应目录
+			return os.MkdirAll(destPath, info.Mode())
+		} else {
+			// 复制文件
+			srcFile, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer srcFile.Close()
+
+			dstFile, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			defer dstFile.Close()
+
+			_, err = io.Copy(dstFile, srcFile)
+			return err
+		}
+	})
+	if err != nil {
+		return err
+	}
+	// 删除源目录
+	return os.RemoveAll(oldPath)
 }

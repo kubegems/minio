@@ -1,12 +1,16 @@
 package cephfs
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
 
+	minio "github.com/minio/minio/cmd"
+	"github.com/minio/minio/internal/logger"
+	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
@@ -85,7 +89,36 @@ func newClient(configPath string) (*k8sClient, error) {
 	return &k8sClient{client}, nil
 }
 
-// func (k *K8sClient) ExecuteInContainer(podName, namespace, containerName string, cmd []string) (stdout string, stderr string, err error) {
+type s3bucketCollector struct{}
+
+func (s *s3bucketCollector) Describe(ch chan<- *prometheus.Desc) {
+	ch <- prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil)
+	ch <- prometheus.NewDesc("s3_input_bytes", "Total number of bytes transferred to S3", []string{"bucket"}, nil)
+	ch <- prometheus.NewDesc("total_bytes", "Total S3 storage bytes", []string{"bucket"}, nil)
+	ch <- prometheus.NewDesc("total_files", "Total S3 storage files", []string{"bucket"}, nil)
+}
+func (s *s3bucketCollector) Collect(ch chan<- prometheus.Metric) {
+	bts := minio.GlobalBucketStatInfoCount.S3InputBytes.Load()
+	for k, v := range bts {
+		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("s3_input_bytes", "Total number of bytes transferred to S3", []string{"bucket"}, nil), prometheus.CounterValue, float64(v), k)
+	}
+	rts := minio.GlobalBucketStatInfoCount.S3RequestCount.Load()
+	for k, v := range rts {
+		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil), prometheus.CounterValue, float64(v), k)
+	}
+
+	usage, err := minio.LoadDataUsageFromBackendForCephFS(context.Background())
+	if err != nil {
+		logger.LogIf(context.Background(), err)
+		return
+	}
+	for k, v := range usage.BucketsUsage {
+		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_bytes", "Total S3 storage bytes", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.Size), k)
+		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_files", "Total S3 storage files", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.ObjectsCount), k)
+	}
+}
+
+// func (k *k8sClient) executeInContainer(podName, namespace, containerName string, cmd []string) (stdout string, stderr string, err error) {
 // 	klog.V(6).Infof("Execute command %v in container %s in pod %s in namespace %s", cmd, containerName, podName, namespace)
 // 	const tty = false
 

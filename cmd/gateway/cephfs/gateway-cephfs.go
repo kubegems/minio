@@ -2,6 +2,8 @@ package cephfs
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -10,6 +12,9 @@ import (
 	madmin "github.com/minio/madmin-go"
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/internal/logger"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -36,12 +41,21 @@ EXAMPLES:
      {{.Prompt}} {{.HelpName}} /data /data-mirror
 `
 
+	selfFlag := []cli.Flag{
+		&cli.StringFlag{
+			Name:  "metrics",
+			Value: ":9567",
+			Usage: "address to export metrics",
+		},
+	}
+
 	minio.RegisterGatewayCommand(cli.Command{
 		Name:               minio.CephFSGateway,
-		Usage:              "Ceph filesystem storage (CephFS)",
+		Usage:              "Ceph FileSystem Storage (CephFS)",
 		Action:             cephfsGatewayMain,
 		CustomHelpTemplate: cephfsGatewayTemplate,
 		HideHelpCommand:    true,
+		Flags:              selfFlag,
 	})
 }
 
@@ -56,6 +70,7 @@ func cephfsGatewayMain(ctx *cli.Context) {
 	minio.StartGateway(ctx, &CephFS{
 		cephfsMountPoint: strings.TrimSuffix(args.Get(0), "/"),
 		dataPath:         strings.TrimSuffix(args.Get(1), "/"),
+		metricsAddress:   ctx.String("metrics"),
 		includeNamespace: "kubegems-pai",
 		mountPrefix:      "/volumes/csi/",
 	})
@@ -66,6 +81,7 @@ type CephFS struct {
 	dataPath         string
 	includeNamespace string
 	mountPrefix      string
+	metricsAddress   string
 }
 
 func (c *CephFS) Name() string {
@@ -100,8 +116,38 @@ func (c *CephFS) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLayer, e
 	if err != nil {
 		return nil, err
 	}
-
+	exposeMetrics(c.dataPath, c.metricsAddress)
 	return &cephfsObjects{newObject}, nil
+}
+
+func exposeMetrics(mp, addr string) {
+	registry := prometheus.NewRegistry() // replace default so only JuiceFS metrics are exposed
+	registerer := prometheus.WrapRegistererWithPrefix("juicefs_",
+		prometheus.WrapRegistererWith(prometheus.Labels{"mp": mp}, registry))
+	registerer.MustRegister(collectors.NewGoCollector())
+	registerer.MustRegister(&s3bucketCollector{})
+	ip, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		logger.LogIf(context.Background(), err)
+		return
+	}
+	http.Handle("/metrics", promhttp.HandlerFor(
+		registry,
+		promhttp.HandlerOpts{
+			EnableOpenMetrics: true,
+		},
+	))
+	ln, err := net.Listen("tcp", net.JoinHostPort(ip, port))
+	if err != nil {
+		logger.LogIf(context.Background(), err)
+		return
+	}
+	go func() {
+		if err := http.Serve(ln, nil); err != nil {
+			logger.LogIf(context.Background(), err)
+			return
+		}
+	}()
 }
 
 type cephfsObjects struct {

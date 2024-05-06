@@ -105,6 +105,59 @@ func loadPrefixUsageFromBackend(ctx context.Context, objAPI ObjectLayer, bucket 
 	return m, nil
 }
 
+func LoadDataUsageFromBackendForCephFS(ctx context.Context) (DataUsageInfo, error) {
+	objAPI := newObjectLayerFn()
+	if objAPI == nil {
+		return DataUsageInfo{}, errServerNotInitialized
+	}
+	buf, err := readConfig(ctx, objAPI.GetMetaStore(), dataUsageObjNamePath)
+	if err != nil {
+		if errors.Is(err, errConfigNotFound) {
+			return DataUsageInfo{}, nil
+		}
+		return DataUsageInfo{}, toObjectErr(err, minioMetaBucket, dataUsageObjNamePath)
+	}
+
+	var dataUsageInfo DataUsageInfo
+	json := jsoniter.ConfigCompatibleWithStandardLibrary
+	if err = json.Unmarshal(buf, &dataUsageInfo); err != nil {
+		return DataUsageInfo{}, err
+	}
+	// For forward compatibility reasons, we need to add this code.
+	if len(dataUsageInfo.BucketsUsage) == 0 {
+		dataUsageInfo.BucketsUsage = make(map[string]BucketUsageInfo, len(dataUsageInfo.BucketSizes))
+		for bucket, size := range dataUsageInfo.BucketSizes {
+			dataUsageInfo.BucketsUsage[bucket] = BucketUsageInfo{Size: size}
+		}
+	}
+
+	// For backward compatibility reasons, we need to add this code.
+	if len(dataUsageInfo.BucketSizes) == 0 {
+		dataUsageInfo.BucketSizes = make(map[string]uint64, len(dataUsageInfo.BucketsUsage))
+		for bucket, bui := range dataUsageInfo.BucketsUsage {
+			dataUsageInfo.BucketSizes[bucket] = bui.Size
+		}
+	}
+	// For forward compatibility reasons, we need to add this code.
+	for bucket, bui := range dataUsageInfo.BucketsUsage {
+		if bui.ReplicatedSizeV1 > 0 || bui.ReplicationFailedCountV1 > 0 ||
+			bui.ReplicationFailedSizeV1 > 0 || bui.ReplicationPendingCountV1 > 0 {
+			cfg, _ := getReplicationConfig(GlobalContext, bucket)
+			if cfg != nil && cfg.RoleArn != "" {
+				dataUsageInfo.ReplicationInfo = make(map[string]BucketTargetUsageInfo)
+				dataUsageInfo.ReplicationInfo[cfg.RoleArn] = BucketTargetUsageInfo{
+					ReplicationFailedSize:   bui.ReplicationFailedSizeV1,
+					ReplicationFailedCount:  bui.ReplicationFailedCountV1,
+					ReplicatedSize:          bui.ReplicatedSizeV1,
+					ReplicationPendingCount: bui.ReplicationPendingCountV1,
+					ReplicationPendingSize:  bui.ReplicationPendingSizeV1,
+				}
+			}
+		}
+	}
+	return dataUsageInfo, nil
+}
+
 func loadDataUsageFromBackend(ctx context.Context, objAPI ObjectLayer) (DataUsageInfo, error) {
 	buf, err := readConfig(ctx, objAPI.GetMetaStore(), dataUsageObjNamePath)
 	if err != nil {

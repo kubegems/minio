@@ -156,7 +156,7 @@ func (sys *IAMSys) initStore(objAPI ObjectLayer, etcdClient *etcd.Client, store 
 	//还是优先使用etcd作为IAM的存储
 	if etcdClient == nil {
 		if globalIsGateway {
-			if globalGatewayName == NASBackendGateway {
+			if globalGatewayName == NASBackendGateway || globalGatewayName == CephFSGateway {
 				sys.store = &IAMStoreSys{newIAMObjectStore(objAPI, sys.usersSysType)}
 			} else if store != nil {
 				sys.store = &IAMStoreSys{newIAMKVStore(store, sys.usersSysType)}
