@@ -342,6 +342,10 @@ func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates cha
 	return nil
 }
 
+func (fs *FSObjects) GetFSPath() string {
+	return fs.fsPath
+}
+
 // scanBucket scans a single bucket in FS mode.
 // The updated cache for the bucket is returned.
 // A partially updated bucket may be returned.

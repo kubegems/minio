@@ -2,9 +2,14 @@ package cephfs
 
 import (
 	"context"
+	"io/fs"
+	"math/rand"
 	"os"
 	"os/signal"
+	"path"
+	"path/filepath"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -89,7 +94,9 @@ func newClient(configPath string) (*k8sClient, error) {
 	return &k8sClient{client}, nil
 }
 
-type s3bucketCollector struct{}
+type s3bucketCollector struct {
+	dm *dataUsageCacheMetrics
+}
 
 func (s *s3bucketCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil)
@@ -106,16 +113,87 @@ func (s *s3bucketCollector) Collect(ch chan<- prometheus.Metric) {
 	for k, v := range rts {
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil), prometheus.CounterValue, float64(v), k)
 	}
-
-	usage, err := minio.LoadDataUsageFromBackendForCephFS(context.Background())
-	if err != nil {
-		logger.LogIf(context.Background(), err)
-		return
-	}
-	for k, v := range usage.BucketsUsage {
+	for k, v := range s.dm.getBucketUsage() {
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_bytes", "Total S3 storage bytes", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.Size), k)
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_files", "Total S3 storage files", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.ObjectsCount), k)
 	}
+}
+
+func (c *cephfsObjects) Scanner(ctx context.Context) {
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	time.Sleep(time.Second)
+	for {
+		bucketUsage := make(chan bucketUsageInfo, 10)
+		go func() {
+			for usage := range bucketUsage {
+				c.usageCache.updateBucketUsage(usage)
+			}
+		}()
+		if err := c.scannerUsage(ctx, bucketUsage); err != nil {
+			logger.LogIf(ctx, err)
+		}
+		time.Sleep(time.Duration(10+r.Intn(10)) * time.Second)
+	}
+}
+
+type bucketUsageInfo struct {
+	bucketName string
+	minio.BucketUsageInfo
+}
+
+func (c *cephfsObjects) scannerUsage(ctx context.Context, ch chan<- bucketUsageInfo) error {
+	defer close(ch)
+	buckets, err := c.ListBuckets(ctx)
+	if err != nil {
+		return err
+	}
+	fsPath := c.ObjectLayer.(*minio.FSObjects).GetFSPath()
+	for _, b := range buckets {
+		bucketPath := path.Join(fsPath, b.Name)
+		bu := bucketUsageInfo{bucketName: b.Name}
+		err := filepath.WalkDir(bucketPath, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if !d.IsDir() {
+				info, err := d.Info()
+				if err != nil {
+					return err
+				}
+				bu.Size += uint64(info.Size())
+				bu.ObjectsCount += 1
+			}
+			return nil
+		})
+		if err != nil {
+			logger.Error("run filepath.WalkDir error:", err)
+			continue
+		}
+		ch <- bu
+
+	}
+	return nil
+}
+
+type dataUsageCacheMetrics struct {
+	sync.RWMutex
+	usage map[string]minio.BucketUsageInfo
+}
+
+func (d *dataUsageCacheMetrics) updateBucketUsage(bi bucketUsageInfo) {
+	d.Lock()
+	defer d.Unlock()
+	d.usage[bi.bucketName] = bi.BucketUsageInfo
+}
+
+func (d *dataUsageCacheMetrics) getBucketUsage() map[string]minio.BucketUsageInfo {
+	d.RLock()
+	defer d.RUnlock()
+	ret := make(map[string]minio.BucketUsageInfo, len(d.usage))
+	for k, v := range d.usage {
+		ret[k] = v
+	}
+	return ret
 }
 
 // func (k *k8sClient) executeInContainer(podName, namespace, containerName string, cmd []string) (stdout string, stderr string, err error) {

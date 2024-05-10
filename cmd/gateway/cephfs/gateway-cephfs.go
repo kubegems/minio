@@ -116,16 +116,23 @@ func (c *CephFS) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLayer, e
 	if err != nil {
 		return nil, err
 	}
-	exposeMetrics(c.dataPath, c.metricsAddress)
-	return &cephfsObjects{newObject}, nil
+	co := &cephfsObjects{
+		usageCache: &dataUsageCacheMetrics{
+			usage: make(map[string]minio.BucketUsageInfo),
+		},
+		ObjectLayer: newObject,
+	}
+	go co.Scanner(context.Background())
+	exposeMetrics(c.dataPath, c.metricsAddress, co.usageCache)
+	return co, nil
 }
 
-func exposeMetrics(mp, addr string) {
+func exposeMetrics(mp, addr string, dm *dataUsageCacheMetrics) {
 	registry := prometheus.NewRegistry() // replace default so only JuiceFS metrics are exposed
 	registerer := prometheus.WrapRegistererWithPrefix("juicefs_",
 		prometheus.WrapRegistererWith(prometheus.Labels{"mp": mp}, registry))
 	registerer.MustRegister(collectors.NewGoCollector())
-	registerer.MustRegister(&s3bucketCollector{})
+	registerer.MustRegister(&s3bucketCollector{dm: dm})
 	ip, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		logger.LogIf(context.Background(), err)
@@ -151,6 +158,7 @@ func exposeMetrics(mp, addr string) {
 }
 
 type cephfsObjects struct {
+	usageCache *dataUsageCacheMetrics
 	minio.ObjectLayer
 }
 
