@@ -141,6 +141,8 @@ type bucketUsageInfo struct {
 	minio.BucketUsageInfo
 }
 
+// TODO
+// TODO - fix scanner object count and size has wrong data
 func (c *cephfsObjects) scannerUsage(ctx context.Context, ch chan<- bucketUsageInfo) error {
 	defer close(ch)
 	buckets, err := c.ListBuckets(ctx)
