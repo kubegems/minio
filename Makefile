@@ -7,7 +7,7 @@ GOOS := $(shell go env GOOS)
 
 VERSION ?= $(shell git describe --tags)
 ##TAG ?= minio/minio-$(GOARCH):0.0.2
-##TAG ?= registry.cn-beijing.aliyuncs.com/kubegems/s3-gateway:v0.0.1
+##TAG ?= registry.cn-beijing.aliyuncs.com/kubegems/juicefs-gateway:v0.0.6
 
 BIN_DIR?=bin
 IMAGE_REGISTRY?=registry.cn-beijing.aliyuncs.com
@@ -26,7 +26,7 @@ build: ## Build local binary.
 
 PLATFORM?=linux/amd64,linux/arm64
 release-image: build
-	docker buildx build --platform=${PLATFORM} --push -t ${IMAGE_REGISTRY}/kubegems/juicefs-gateway:v0.0.5 -f Dockerfile ${BIN_DIR}
+	docker buildx build --platform=${PLATFORM} --push -t ${IMAGE_REGISTRY}/kubegems/juicefs-gateway:v0.0.7 -f Dockerfile ${BIN_DIR}
 
 
 

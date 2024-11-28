@@ -33,3 +33,4 @@ minio.RELEASE*
 mc
 nancy
 inspects/*
+tmp/

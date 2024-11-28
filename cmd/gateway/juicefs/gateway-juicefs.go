@@ -494,19 +494,23 @@ func (n *JfsObjects) checkBucket(ctx context.Context, bucket string) error {
 
 // ListObjects lists all blobs in JFS bucket filtered by prefix.
 func (n *JfsObjects) ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi minio.ListObjectsInfo, err error) {
+	logger.Infof("Start ListObjects: %s,%s,%s,%s,%d", bucket, prefix, marker, delimiter, maxKeys)
+	defer logger.Infof("End ListObjects: %s,%s,%s,%s,%d", bucket, prefix, marker, delimiter, maxKeys)
 	if err := n.checkBucket(ctx, bucket); err != nil {
 		return loi, err
 	}
 	getObjectInfo := func(ctx context.Context, bucket, object string) (obj minio.ObjectInfo, err error) {
 		fi, eno := n.fs.Stat(mctx, n.path(bucket, object))
 		if eno == 0 {
+			contentType, _ := n.fs.GetXattr(mctx, n.path(bucket, object), s3ContentType)
 			obj = minio.ObjectInfo{
-				Bucket:  bucket,
-				Name:    object,
-				ModTime: fi.ModTime(),
-				Size:    fi.Size(),
-				IsDir:   fi.IsDir(),
-				AccTime: fi.ModTime(),
+				Bucket:      bucket,
+				Name:        object,
+				ModTime:     fi.ModTime(),
+				Size:        fi.Size(),
+				IsDir:       fi.IsDir(),
+				AccTime:     fi.ModTime(),
+				ContentType: string(contentType),
 			}
 		}
 		return obj, jfsToObjectErr(ctx, eno, bucket, object)
@@ -521,6 +525,8 @@ func (n *JfsObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 // ListObjectsV2 lists all blobs in JFS bucket filtered by prefix
 func (n *JfsObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int,
 	fetchOwner bool, startAfter string) (loi minio.ListObjectsV2Info, err error) {
+	logger.Infof("Start ListObjectsV2: %s,%s,%s,%d", bucket, prefix, delimiter, maxKeys)
+	defer logger.Infof("End ListObjectsV2: %s,%s,%s,%d", bucket, prefix, delimiter, maxKeys)
 	if !n.isValidBucketName(bucket) {
 		return minio.ListObjectsV2Info{}, minio.BucketNameInvalid{Bucket: bucket}
 	}
@@ -734,6 +740,9 @@ func (n *JfsObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 	if fi.IsDir() {
 		size = 0
 		contentType = "application/octet-stream"
+	} else {
+		contentTypes, _ := n.fs.GetXattr(mctx, n.path(bucket, object), s3ContentType)
+		contentType = string(contentTypes)
 	}
 	return minio.ObjectInfo{
 		Bucket:      bucket,
@@ -771,6 +780,7 @@ func (n *JfsObjects) mkdirAll(ctx context.Context, p string, mode os.FileMode) e
 }
 
 func (n *JfsObjects) putObject(ctx context.Context, bucket, object string, r *minio.PutObjReader, opts minio.ObjectOptions) (err error) {
+	logger.Infof("put object meta:%v", opts)
 	tmpname := n.tpath(bucket, "tmp", minio.MustGetUUID())
 	_ = n.mkdirAll(ctx, path.Dir(tmpname), os.FileMode(n.gConf.DirMode))
 	f, eno := n.fs.Create(mctx, tmpname, 0666, n.gConf.Mode)
@@ -816,6 +826,14 @@ func (n *JfsObjects) putObject(ctx context.Context, bucket, object string, r *mi
 		err = jfsToObjectErr(ctx, eno, bucket, object)
 		return
 	}
+	contentType, exist := opts.UserDefined["content-type"]
+	if !exist {
+		contentType = "application/octet-stream"
+	}
+	if n.fs.SetXattr(mctx, object, s3ContentType, []byte(contentType), 0) != 0 {
+		logger.Errorf("set xattr error, path: %s,xattr: %s,value: %s,flags: %d", object, s3ContentType, contentType, 0)
+	}
+
 	return
 }
 
@@ -881,6 +899,7 @@ func (n *JfsObjects) NewMultipartUpload(ctx context.Context, bucket string, obje
 
 const uploadKeyName = "s3-object"
 const s3Etag = "s3-etag"
+const s3ContentType = "s3-content-type"
 
 func (n *JfsObjects) ListMultipartUploads(ctx context.Context, bucket string, prefix string, keyMarker string, uploadIDMarker string, delimiter string, maxUploads int) (lmi minio.ListMultipartsInfo, err error) {
 	if err = n.checkBucket(ctx, bucket); err != nil {

@@ -49,7 +49,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/pyroscope-io/client/pyroscope"
 	"github.com/sirupsen/logrus"
 )
 
@@ -454,29 +453,29 @@ func setup(c *cli.Context, n int) {
 		}()
 	}
 
-	if c.IsSet("pyroscope") {
-		tags := make(map[string]string)
-		appName := fmt.Sprintf("juicefs.%s", c.Command.Name)
-		if c.Command.Name == "mount" {
-			tags["mountpoint"] = c.Args().Get(1)
-		}
-		if hostname, err := os.Hostname(); err == nil {
-			tags["hostname"] = hostname
-		}
-		tags["pid"] = strconv.Itoa(os.Getpid())
-		tags["version"] = version.Version()
+	// if c.IsSet("pyroscope") {
+	// 	tags := make(map[string]string)
+	// 	appName := fmt.Sprintf("juicefs.%s", c.Command.Name)
+	// 	if c.Command.Name == "mount" {
+	// 		tags["mountpoint"] = c.Args().Get(1)
+	// 	}
+	// 	if hostname, err := os.Hostname(); err == nil {
+	// 		tags["hostname"] = hostname
+	// 	}
+	// 	tags["pid"] = strconv.Itoa(os.Getpid())
+	// 	tags["version"] = version.Version()
 
-		if _, err := pyroscope.Start(pyroscope.Config{
-			ApplicationName: appName,
-			ServerAddress:   c.String("pyroscope"),
-			Logger:          logger,
-			Tags:            tags,
-			AuthToken:       os.Getenv("PYROSCOPE_AUTH_TOKEN"),
-			ProfileTypes:    pyroscope.DefaultProfileTypes,
-		}); err != nil {
-			logger.Errorf("start pyroscope agent: %v", err)
-		}
-	}
+	// 	if _, err := pyroscope.Start(pyroscope.Config{
+	// 		ApplicationName: appName,
+	// 		ServerAddress:   c.String("pyroscope"),
+	// 		Logger:          logger,
+	// 		Tags:            tags,
+	// 		AuthToken:       os.Getenv("PYROSCOPE_AUTH_TOKEN"),
+	// 		ProfileTypes:    pyroscope.DefaultProfileTypes,
+	// 	}); err != nil {
+	// 		logger.Errorf("start pyroscope agent: %v", err)
+	// 	}
+	// }
 }
 
 func globalFlags() []cli.Flag {
