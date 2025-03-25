@@ -27,7 +27,6 @@ import (
 	"github.com/minio/console/restapi"
 	xhttp "github.com/minio/minio/internal/http"
 	"github.com/minio/minio/internal/logger"
-	"github.com/minio/pkg/wildcard"
 	"github.com/rs/cors"
 )
 
@@ -516,12 +515,14 @@ func corsHandler(handler http.Handler) http.Handler {
 
 	return cors.New(cors.Options{
 		AllowOriginFunc: func(origin string) bool {
-			for _, allowedOrigin := range globalAPIConfig.getCorsAllowOrigins() {
-				if wildcard.MatchSimple(allowedOrigin, origin) {
-					return true
-				}
-			}
-			return false
+			// 允许所有源访问
+			// for _, allowedOrigin := range globalAPIConfig.getCorsAllowOrigins() {
+			// 	if wildcard.MatchSimple(allowedOrigin, origin) {
+			// 		return true
+			// 	}
+			// }
+			// return false
+			return true
 		},
 		AllowedMethods: []string{
 			http.MethodGet,

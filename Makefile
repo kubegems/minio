@@ -26,6 +26,7 @@ build: ## Build local binary.
 
 PLATFORM?=linux/amd64,linux/arm64
 release-image: build
+	cp dockerscripts/docker-entrypoint.sh ${BIN_DIR}/docker-entrypoint.sh
 	docker buildx build --platform=${PLATFORM} --push -t ${IMAGE_REGISTRY}/kubegems/juicefs-gateway:v0.0.7 -f Dockerfile ${BIN_DIR}
 
 
