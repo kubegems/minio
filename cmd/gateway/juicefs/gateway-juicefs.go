@@ -173,8 +173,8 @@ func initIAMStore(addr string) {
 		}
 		opt.MinRetryBackoff = time.Millisecond * 20
 		opt.MaxRetryBackoff = time.Second * 10
-		opt.ReadTimeout = time.Second * 30
-		opt.WriteTimeout = time.Second * 5
+		opt.ReadTimeout = time.Second * 60
+		opt.WriteTimeout = time.Second * 10
 		//opt.MaxRetries = -1 // Redis use -1 to disable retries
 		opt.MaxRetries = 10
 		minio.RegisterRedisStore(redis.NewClient(opt))

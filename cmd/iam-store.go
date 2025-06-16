@@ -431,7 +431,6 @@ func (store *IAMStoreSys) LoadIAMCache(ctx context.Context) error {
 
 	cache := store.lock()
 	defer store.unlock()
-
 	if err := store.loadPolicyDocs(ctx, newCache.iamPolicyDocsMap); err != nil {
 		return err
 	}

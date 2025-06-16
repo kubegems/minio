@@ -1307,7 +1307,6 @@ func (a adminAPIHandlers) ListCannedPolicies(w http.ResponseWriter, r *http.Requ
 	if objectAPI == nil {
 		return
 	}
-
 	policies, err := globalIAMSys.ListPolicies(ctx, "")
 	if err != nil {
 		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)

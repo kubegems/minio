@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -329,24 +330,43 @@ func (r *RedisStore) ReadKeyKV(ctx context.Context, key string) ([]byte, error) 
 	return r.client.Get(timeoutCtx, key).Bytes()
 }
 func (r *RedisStore) KeysPrefixKV(ctx context.Context, prefix string, keysOnly bool) ([]kv, error) {
-	var keys = make([]kv, 0)
-	iter := r.client.Scan(ctx, 0, prefix+"*", 0).Iterator()
-	for iter.Next(ctx) {
-		if keysOnly {
-			keys = append(keys, kv{
-				key:   iter.Val(),
-				value: nil,
-			})
-			continue
-		}
-		date, err := r.client.Get(ctx, iter.Val()).Bytes()
+	now := time.Now()
+	defer func() {
+		kvLogger.Infof("Search %s Used: %v", prefix+"*", time.Since(now))
+	}()
+	var (
+		cursor    uint64
+		keys      []string
+		keyvalues = make([]kv, 0)
+	)
+	for {
+		var (
+			err  error
+			part []string
+		)
+		part, cursor, err = r.client.Scan(ctx, cursor, prefix+"*", 1000).Result()
 		if err != nil {
-			continue
+			return keyvalues, err
 		}
-		keys = append(keys, kv{
-			key:   iter.Val(),
-			value: date,
-		})
+		keys = append(keys, part...)
+		if cursor == 0 {
+			break
+		}
 	}
-	return keys, nil
+	if len(keys) > 0 {
+		values, err := r.client.MGet(ctx, keys...).Result()
+		if err != nil {
+			kvLogger.Infof("MGet %s failed %v", prefix+"*", err)
+		}
+		for i, k := range keys {
+			if values[i] != nil {
+				keyvalues = append(keyvalues,
+					kv{
+						key:   k,
+						value: []byte(fmt.Sprintf("%v", values[i])),
+					})
+			}
+		}
+	}
+	return keyvalues, nil
 }
