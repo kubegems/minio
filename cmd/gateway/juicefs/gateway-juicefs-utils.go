@@ -90,17 +90,25 @@ func duration(s string) time.Duration {
 	return 0
 }
 
-func wrapRegister(mp, name string) (prometheus.Registerer, *prometheus.Registry) {
+func wrapRegister(mp, name string, dataUsageProvider DataUsageProvider) (prometheus.Registerer, *prometheus.Registry) {
 	registry := prometheus.NewRegistry() // replace default so only JuiceFS metrics are exposed
 	registerer := prometheus.WrapRegistererWithPrefix("juicefs_",
 		prometheus.WrapRegistererWith(prometheus.Labels{"mp": mp, "vol_name": name}, registry))
 	registerer.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	registerer.MustRegister(collectors.NewGoCollector())
-	registerer.MustRegister(&s3bucketCollector{})
+	registerer.MustRegister(newS3BucketCollector(dataUsageProvider))
 	return registerer, registry
 }
 
-type s3bucketCollector struct{}
+type s3bucketCollector struct {
+	dataUsageProvider DataUsageProvider
+}
+
+func newS3BucketCollector(provider DataUsageProvider) *s3bucketCollector {
+	return &s3bucketCollector{
+		dataUsageProvider: provider,
+	}
+}
 
 func (s *s3bucketCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil)
@@ -117,7 +125,7 @@ func (s *s3bucketCollector) Collect(ch chan<- prometheus.Metric) {
 	for k, v := range rts {
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil), prometheus.CounterValue, float64(v), k)
 	}
-	for k, v := range globalDataUsageInfo.getGlobalDataUsageInfo() {
+	for k, v := range s.dataUsageProvider.GetDataUsageInfo() {
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_bytes", "Total S3 storage bytes", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.Size), k)
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_files", "Total S3 storage files", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.ObjectsCount), k)
 	}
@@ -345,7 +353,7 @@ func getFormat(c *cli.Context, metaCli meta.Meta) (*meta.Format, error) {
 	return format, nil
 }
 
-func initForSvc(c *cli.Context, mp, metaURL string) (meta.Meta, chunk.ChunkStore, *vfs.Config) {
+func initForSvc(c *cli.Context, mp, metaURL string, dataUsageProvider DataUsageProvider) (meta.Meta, chunk.ChunkStore, *vfs.Config) {
 	removePassword(metaURL)
 	metaConf := getMetaConf(c, mp, c.Bool("read-only"))
 	metaCli := meta.NewClient(metaURL, metaConf)
@@ -353,7 +361,7 @@ func initForSvc(c *cli.Context, mp, metaURL string) (meta.Meta, chunk.ChunkStore
 	if err != nil {
 		logger.Fatalf("load setting: %s", err)
 	}
-	registerer, registry := wrapRegister(mp, format.Name)
+	registerer, registry := wrapRegister(mp, format.Name, dataUsageProvider)
 	if !c.Bool("writeback") && c.IsSet("upload-delay") {
 		logger.Warnf("delayed upload only work in writeback mode")
 	}
@@ -694,7 +702,7 @@ func bucketPath(p ...string) string {
 	return sep + minio.PathJoin(p...)
 }
 
-func runScanner(f *fs.FileSystem, usage chan<- minio.DataUsageInfo) error {
+func runScanner(f *fs.FileSystem, dataUsageProvider DataUsageProvider, usage chan<- minio.DataUsageInfo) error {
 	logger.Infof("start scanner for usage")
 	defer close(usage)
 	ctx := meta.NewContext(uint32(os.Getpid()), uint32(os.Getuid()), []uint32{uint32(os.Getgid())})
@@ -738,38 +746,44 @@ func runScanner(f *fs.FileSystem, usage chan<- minio.DataUsageInfo) error {
 				Size:         s.Size,
 				ObjectsCount: s.Files,
 			}
-			globalDataUsageInfo.setGlobalDataUsageInfo(du.BucketsUsage)
 		}
 	}
+	dataUsageProvider.SetDataUsageInfo(du.BucketsUsage)
 	du.LastUpdate = time.Now()
 	usage <- du
 	logger.Infof("end scanner for usage")
 	return nil
 }
 
-var globalDataUsageInfo = &dataUsageCacheMetrics{
-	usage: make(map[string]minio.BucketUsageInfo),
+type DataUsageProvider interface {
+	GetDataUsageInfo() map[string]minio.BucketUsageInfo
+	SetDataUsageInfo(usage map[string]minio.BucketUsageInfo)
 }
 
-type dataUsageCacheMetrics struct {
+var _ DataUsageProvider = (*DataUsageCache)(nil)
+
+type DataUsageCache struct {
 	sync.RWMutex
 	usage map[string]minio.BucketUsageInfo
 }
 
-func (d *dataUsageCacheMetrics) setGlobalDataUsageInfo(usage map[string]minio.BucketUsageInfo) {
-	d.Lock()
-	defer d.Unlock()
-	for k := range d.usage {
-		if _, ok := usage[k]; !ok {
-			delete(d.usage, k)
-		}
-	}
-	for k, v := range usage {
-		d.usage[k] = v
+func NewDataUsageCache() *DataUsageCache {
+	return &DataUsageCache{
+		usage: make(map[string]minio.BucketUsageInfo),
 	}
 }
 
-func (d *dataUsageCacheMetrics) getGlobalDataUsageInfo() map[string]minio.BucketUsageInfo {
+func (d *DataUsageCache) SetDataUsageInfo(usage map[string]minio.BucketUsageInfo) {
+	d.Lock()
+	defer d.Unlock()
+	newUsage := make(map[string]minio.BucketUsageInfo, len(usage))
+	for k, v := range usage {
+		newUsage[k] = v
+	}
+	d.usage = newUsage
+}
+
+func (d *DataUsageCache) GetDataUsageInfo() map[string]minio.BucketUsageInfo {
 	d.RLock()
 	defer d.RUnlock()
 	ret := make(map[string]minio.BucketUsageInfo, len(d.usage))

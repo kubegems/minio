@@ -202,9 +202,10 @@ func (n *JfsObjects) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLaye
 	setup(n.ctx, 1)
 	addr := n.ctx.Args().Get(0)
 	removePassword(addr)
+	dataUsageCache := NewDataUsageCache()
 	//初始化元数据存储引擎
 	initIAMStore(addr)
-	m, store, conf := initForSvc(n.ctx, "s3gateway", addr)
+	m, store, conf := initForSvc(n.ctx, "s3gateway", addr, dataUsageCache)
 
 	jfs, err := fs.NewFileSystem(conf, m, store)
 	if err != nil {
@@ -217,7 +218,7 @@ func (n *JfsObjects) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLaye
 	mctx = meta.NewContext(uint32(os.Getpid()), uint32(os.Getuid()), []uint32{uint32(os.Getgid())})
 	jfsObj := &JfsObjects{fs: jfs, conf: conf, listPool: minio.NewTreeWalkPool(time.Minute * 30), gConf: &Config{MultiBucket: n.ctx.Bool("multi-buckets"), KeepEtag: n.ctx.Bool("keep-etag"), Mode: uint16(0666 &^ umask), DirMode: uint16(0777 &^ umask)}}
 	go jfsObj.cleanup()
-	go jfsObj.scannerDataUsageInBackend(context.Background())
+	go jfsObj.scannerDataUsageInBackend(context.Background(), dataUsageCache)
 	return jfsObj, nil
 }
 
@@ -227,14 +228,14 @@ func (n *JfsObjects) GetMetaStore() minio.ObjectIO {
 }
 
 // scannerDataUsageInBackend - 扫描后端桶的使用情况，并作为Bucket的quota信息
-func (n *JfsObjects) scannerDataUsageInBackend(ctx context.Context) {
+func (n *JfsObjects) scannerDataUsageInBackend(ctx context.Context, dataUsageProvider DataUsageProvider) {
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	time.Sleep(time.Second) // 等待globalBucketQuotaSys初始化完成
+	time.Sleep(10 * time.Second) // 等待globalBucketQuotaSys初始化完成
 	for {
 		usage := make(chan minio.DataUsageInfo, 1)
 		//消费
 		go minio.StorageUsageToMetaEngin(ctx, usage)
-		if err := runScanner(n.fs, usage); err != nil {
+		if err := runScanner(n.fs, dataUsageProvider, usage); err != nil {
 			logger.Errorf("run scanner error: %s", err)
 		}
 		time.Sleep(time.Duration(10+r.Intn(10)) * time.Second)
