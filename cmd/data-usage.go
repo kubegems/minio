@@ -106,6 +106,15 @@ func loadPrefixUsageFromBackend(ctx context.Context, objAPI ObjectLayer, bucket 
 }
 
 func loadDataUsageFromBackend(ctx context.Context, objAPI ObjectLayer) (DataUsageInfo, error) {
+	var dataUsageInfo DataUsageInfo
+	usage := objAPI.GetBucketUsage()
+	if usage != nil {
+		dataUsageInfo.BucketsUsage = make(map[string]BucketUsageInfo, len(usage))
+		for k, v := range usage {
+			dataUsageInfo.BucketsUsage[k] = v
+		}
+		return dataUsageInfo, nil
+	}
 	buf, err := readConfig(ctx, objAPI.GetMetaStore(), dataUsageObjNamePath)
 	if err != nil {
 		if errors.Is(err, errConfigNotFound) {
@@ -114,7 +123,7 @@ func loadDataUsageFromBackend(ctx context.Context, objAPI ObjectLayer) (DataUsag
 		return DataUsageInfo{}, toObjectErr(err, minioMetaBucket, dataUsageObjNamePath)
 	}
 
-	var dataUsageInfo DataUsageInfo
+	//var dataUsageInfo DataUsageInfo
 	json := jsoniter.ConfigCompatibleWithStandardLibrary
 	if err = json.Unmarshal(buf, &dataUsageInfo); err != nil {
 		return DataUsageInfo{}, err

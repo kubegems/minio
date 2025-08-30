@@ -356,6 +356,10 @@ func (n *JfsObjects) DeleteBucket(ctx context.Context, bucket string, opts minio
 	return jfsToObjectErr(ctx, eno, bucket)
 }
 
+func (n *JfsObjects) GetBucketUsage() map[string]minio.BucketUsageInfo {
+	return nil
+}
+
 func (n *JfsObjects) MakeBucketWithLocation(ctx context.Context, bucket string, options minio.BucketOptions) error {
 	if !n.isValidBucketName(bucket) {
 		return minio.BucketNameInvalid{Bucket: bucket}

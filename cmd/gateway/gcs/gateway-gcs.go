@@ -358,6 +358,10 @@ func (l *gcsGateway) GetMetrics(ctx context.Context) (*minio.BackendMetrics, err
 	return l.metrics, nil
 }
 
+func (l *gcsGateway) GetBucketUsage() map[string]minio.BucketUsageInfo {
+	return nil
+}
+
 // Cleanup old files in minio.sys.tmp of the given bucket.
 func (l *gcsGateway) CleanupGCSMinioSysTmpBucket(ctx context.Context, bucket string) {
 	it := l.client.Bucket(bucket).Objects(ctx, &storage.Query{Prefix: minio.GatewayMinioSysTmp, Versions: false})

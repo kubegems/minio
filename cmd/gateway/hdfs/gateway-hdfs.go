@@ -617,6 +617,10 @@ func (n *hdfsObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstB
 	})
 }
 
+func (n *hdfsObjects) GetBucketUsage() map[string]minio.BucketUsageInfo {
+	return nil
+}
+
 func (n *hdfsObjects) getObject(ctx context.Context, bucket, key string, startOffset, length int64, writer io.Writer, etag string, opts minio.ObjectOptions) error {
 	if _, err := n.clnt.Stat(n.hdfsPathJoin(bucket)); err != nil {
 		return hdfsToObjectErr(ctx, err, bucket)

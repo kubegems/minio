@@ -2,11 +2,13 @@ package cephfs
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/minio/cli"
 	madmin "github.com/minio/madmin-go"
@@ -123,16 +125,16 @@ func (c *CephFS) NewGatewayLayer(creds madmin.Credentials) (minio.ObjectLayer, e
 		ObjectLayer: newObject,
 	}
 	go co.Scanner(context.Background())
-	exposeMetrics(c.dataPath, c.metricsAddress, co.usageCache)
+	co.exposeMetrics(c.dataPath, c.metricsAddress)
 	return co, nil
 }
 
-func exposeMetrics(mp, addr string, dm *dataUsageCacheMetrics) {
+func (c *cephfsObjects) exposeMetrics(mp, addr string) {
 	registry := prometheus.NewRegistry() // replace default so only JuiceFS metrics are exposed
 	registerer := prometheus.WrapRegistererWithPrefix("juicefs_",
 		prometheus.WrapRegistererWith(prometheus.Labels{"mp": mp}, registry))
 	registerer.MustRegister(collectors.NewGoCollector())
-	registerer.MustRegister(&s3bucketCollector{dm: dm})
+	registerer.MustRegister(&s3bucketCollector{api: c})
 	ip, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		logger.LogIf(context.Background(), err)
@@ -155,6 +157,16 @@ func exposeMetrics(mp, addr string, dm *dataUsageCacheMetrics) {
 			return
 		}
 	}()
+}
+
+type bucketUsageInfo struct {
+	bucketName string
+	minio.BucketUsageInfo
+}
+
+type dataUsageCacheMetrics struct {
+	sync.RWMutex
+	usage map[string]minio.BucketUsageInfo
 }
 
 type cephfsObjects struct {
@@ -181,6 +193,22 @@ func (c *cephfsObjects) MakeBucketWithLocation(ctx context.Context, bucket strin
 // 不支持删除桶
 func (c *cephfsObjects) DeleteBucket(ctx context.Context, bucket string, opts minio.DeleteBucketOptions) error {
 	return minio.NotImplemented{}
+}
+
+func (c *cephfsObjects) GetBucketUsage() map[string]minio.BucketUsageInfo {
+	c.usageCache.RLock()
+	defer c.usageCache.RUnlock()
+	ret := make(map[string]minio.BucketUsageInfo, len(c.usageCache.usage))
+	for k, v := range c.usageCache.usage {
+		ret[k] = v
+	}
+	return ret
+}
+
+func (c *cephfsObjects) updateBucketUsage(bi bucketUsageInfo) {
+	c.usageCache.Lock()
+	defer c.usageCache.Unlock()
+	c.usageCache.usage[bi.bucketName] = bi.BucketUsageInfo
 }
 
 func (c *cephfsObjects) IsTaggingSupported() bool {
@@ -255,6 +283,6 @@ func (c *CephFS) OnUpdate(oldObj, newObj interface{}) {
 	if !ok {
 		return
 	}
-	logger.Info("update pv:", oldPV.Name, "->", newPV.Name)
+	fmt.Println("update pv:", oldPV.Name, "->", newPV.Name)
 
 }

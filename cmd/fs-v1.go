@@ -55,7 +55,6 @@ var defaultEtag = "00000000000000000000000000000000-1"
 // FSObjects - Implements fs object layer.
 type FSObjects struct {
 	GatewayUnsupported
-
 	// Path to be exported over S3 API.
 	fsPath string
 	// meta json filename, varies by fs / cache backend.
@@ -178,7 +177,7 @@ func NewFSObjectLayer(fsPath string) (ObjectLayer, error) {
 	fs.fsFormatRlk = rlk
 
 	go fs.cleanupStaleUploads(ctx)
-	go intDataUpdateTracker.start(ctx, fsPath)
+	//go intDataUpdateTracker.start(ctx, fsPath)
 
 	// Return successfully initialized object layer.
 	return fs, nil
@@ -239,107 +238,108 @@ func (fs *FSObjects) StorageInfo(ctx context.Context) (StorageInfo, []error) {
 
 // NSScanner returns data usage stats of the current FS deployment
 func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates chan<- DataUsageInfo, wantCycle uint32) error {
-	defer close(updates)
-	// Load bucket totals
-	var totalCache dataUsageCache
-	err := totalCache.load(ctx, fs, dataUsageCacheName)
-	if err != nil {
-		return err
-	}
-	totalCache.Info.Name = dataUsageRoot
-	buckets, err := fs.ListBuckets(ctx)
-	if err != nil {
-		return err
-	}
-	if len(buckets) == 0 {
-		totalCache.keepBuckets(buckets)
-		updates <- totalCache.dui(dataUsageRoot, buckets)
-		return nil
-	}
-	for i, b := range buckets {
-		if isReservedOrInvalidBucket(b.Name, false) {
-			// Delete bucket...
-			buckets = append(buckets[:i], buckets[i+1:]...)
-		}
-	}
+	return NotImplemented{}
+	// defer close(updates)
+	// // Load bucket totals
+	// var totalCache dataUsageCache
+	// err := totalCache.load(ctx, fs, dataUsageCacheName)
+	// if err != nil {
+	// 	return err
+	// }
+	// totalCache.Info.Name = dataUsageRoot
+	// buckets, err := fs.ListBuckets(ctx)
+	// if err != nil {
+	// 	return err
+	// }
+	// if len(buckets) == 0 {
+	// 	totalCache.keepBuckets(buckets)
+	// 	updates <- totalCache.dui(dataUsageRoot, buckets)
+	// 	return nil
+	// }
+	// for i, b := range buckets {
+	// 	if isReservedOrInvalidBucket(b.Name, false) {
+	// 		// Delete bucket...
+	// 		buckets = append(buckets[:i], buckets[i+1:]...)
+	// 	}
+	// }
 
-	totalCache.Info.BloomFilter = bf.bytes()
+	// totalCache.Info.BloomFilter = bf.bytes()
 
-	// Clear totals.
-	var root dataUsageEntry
-	if r := totalCache.root(); r != nil {
-		root.Children = r.Children
-	}
-	totalCache.replace(dataUsageRoot, "", root)
+	// // Clear totals.
+	// var root dataUsageEntry
+	// if r := totalCache.root(); r != nil {
+	// 	root.Children = r.Children
+	// }
+	// totalCache.replace(dataUsageRoot, "", root)
 
-	// Delete all buckets that does not exist anymore.
-	totalCache.keepBuckets(buckets)
+	// // Delete all buckets that does not exist anymore.
+	// totalCache.keepBuckets(buckets)
 
-	for _, b := range buckets {
-		// Load bucket cache.
-		var bCache dataUsageCache
-		err := bCache.load(ctx, fs, path.Join(b.Name, dataUsageCacheName))
-		if err != nil {
-			return err
-		}
-		if bCache.Info.Name == "" {
-			bCache.Info.Name = b.Name
-		}
-		bCache.Info.BloomFilter = totalCache.Info.BloomFilter
-		bCache.Info.NextCycle = wantCycle
-		upds := make(chan dataUsageEntry, 1)
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for update := range upds {
-				totalCache.replace(b.Name, dataUsageRoot, update)
-				if intDataUpdateTracker.debug {
-					logger.Info(color.Green("NSScanner:")+" Got update: %v", len(totalCache.Cache))
-				}
-				cloned := totalCache.clone()
-				updates <- cloned.dui(dataUsageRoot, buckets)
-			}
-		}()
-		bCache.Info.updates = upds
-		cache, err := fs.scanBucket(ctx, b.Name, bCache)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		logger.LogIf(ctx, err)
-		cache.Info.BloomFilter = nil
-		wg.Wait()
+	// for _, b := range buckets {
+	// 	// Load bucket cache.
+	// 	var bCache dataUsageCache
+	// 	err := bCache.load(ctx, fs, path.Join(b.Name, dataUsageCacheName))
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	if bCache.Info.Name == "" {
+	// 		bCache.Info.Name = b.Name
+	// 	}
+	// 	bCache.Info.BloomFilter = totalCache.Info.BloomFilter
+	// 	bCache.Info.NextCycle = wantCycle
+	// 	upds := make(chan dataUsageEntry, 1)
+	// 	var wg sync.WaitGroup
+	// 	wg.Add(1)
+	// 	go func() {
+	// 		defer wg.Done()
+	// 		for update := range upds {
+	// 			totalCache.replace(b.Name, dataUsageRoot, update)
+	// 			if intDataUpdateTracker.debug {
+	// 				logger.Info(color.Green("NSScanner:")+" Got update: %v", len(totalCache.Cache))
+	// 			}
+	// 			cloned := totalCache.clone()
+	// 			updates <- cloned.dui(dataUsageRoot, buckets)
+	// 		}
+	// 	}()
+	// 	bCache.Info.updates = upds
+	// 	cache, err := fs.scanBucket(ctx, b.Name, bCache)
+	// 	select {
+	// 	case <-ctx.Done():
+	// 		return ctx.Err()
+	// 	default:
+	// 	}
+	// 	logger.LogIf(ctx, err)
+	// 	cache.Info.BloomFilter = nil
+	// 	wg.Wait()
 
-		if cache.root() == nil {
-			if intDataUpdateTracker.debug {
-				logger.Info(color.Green("NSScanner:") + " No root added. Adding empty")
-			}
-			cache.replace(cache.Info.Name, dataUsageRoot, dataUsageEntry{})
-		}
-		if cache.Info.LastUpdate.After(bCache.Info.LastUpdate) {
-			if intDataUpdateTracker.debug {
-				logger.Info(color.Green("NSScanner:")+" Saving bucket %q cache with %d entries", b.Name, len(cache.Cache))
-			}
-			logger.LogIf(ctx, cache.save(ctx, fs, path.Join(b.Name, dataUsageCacheName)))
-		}
-		// Merge, save and send update.
-		// We do it even if unchanged.
-		cl := cache.clone()
-		entry := cl.flatten(*cl.root())
-		totalCache.replace(cl.Info.Name, dataUsageRoot, entry)
-		if intDataUpdateTracker.debug {
-			logger.Info(color.Green("NSScanner:")+" Saving totals cache with %d entries", len(totalCache.Cache))
-		}
-		totalCache.Info.LastUpdate = time.Now()
-		logger.LogIf(ctx, totalCache.save(ctx, fs, dataUsageCacheName))
-		cloned := totalCache.clone()
-		updates <- cloned.dui(dataUsageRoot, buckets)
+	// 	if cache.root() == nil {
+	// 		if intDataUpdateTracker.debug {
+	// 			logger.Info(color.Green("NSScanner:") + " No root added. Adding empty")
+	// 		}
+	// 		cache.replace(cache.Info.Name, dataUsageRoot, dataUsageEntry{})
+	// 	}
+	// 	if cache.Info.LastUpdate.After(bCache.Info.LastUpdate) {
+	// 		if intDataUpdateTracker.debug {
+	// 			logger.Info(color.Green("NSScanner:")+" Saving bucket %q cache with %d entries", b.Name, len(cache.Cache))
+	// 		}
+	// 		logger.LogIf(ctx, cache.save(ctx, fs, path.Join(b.Name, dataUsageCacheName)))
+	// 	}
+	// 	// Merge, save and send update.
+	// 	// We do it even if unchanged.
+	// 	cl := cache.clone()
+	// 	entry := cl.flatten(*cl.root())
+	// 	totalCache.replace(cl.Info.Name, dataUsageRoot, entry)
+	// 	if intDataUpdateTracker.debug {
+	// 		logger.Info(color.Green("NSScanner:")+" Saving totals cache with %d entries", len(totalCache.Cache))
+	// 	}
+	// 	totalCache.Info.LastUpdate = time.Now()
+	// 	logger.LogIf(ctx, totalCache.save(ctx, fs, dataUsageCacheName))
+	// 	cloned := totalCache.clone()
+	// 	updates <- cloned.dui(dataUsageRoot, buckets)
 
-	}
+	// }
 
-	return nil
+	// return nil
 }
 
 func (fs *FSObjects) GetFSPath() string {

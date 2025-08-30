@@ -166,6 +166,7 @@ type BackendMetrics struct {
 
 // ObjectLayer implements primitives for object API layer.
 type ObjectLayer interface {
+	GetBucketUsage() map[string]BucketUsageInfo
 	// Locking operations on object.
 	NewNSLock(bucket string, objects ...string) RWLocker
 

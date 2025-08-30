@@ -30,6 +30,13 @@ release-image: build
 	docker buildx build --platform=${PLATFORM} --push -t ${IMAGE_REGISTRY}/kubegems/juicefs-gateway:v0.0.7 -f Dockerfile ${BIN_DIR}
 
 
+PLATFORM?=linux/amd64,linux/arm64
+release-cephfs-image:
+	cp dockerscripts/docker-entrypoint.sh ${BIN_DIR}/docker-entrypoint.sh
+	docker buildx build --platform=${PLATFORM} --push -t ${IMAGE_REGISTRY}/kubegems/s3-gateway:v0.0.1 -f Dockerfile ${BIN_DIR}
+
+
+
 
 clean: ## cleanup all generated assets
 	@rm -rvf bin/minio-*
@@ -37,3 +44,10 @@ clean: ## cleanup all generated assets
 	@rm -rvf build
 	@rm -rvf release
 	@rm -rvf .verify*
+
+
+PLATFORM?=linux/amd64,linux/arm64
+release-fuse-image: build
+	cp dockerscripts/check_mount.sh ${BIN_DIR}/check_mount.sh
+	cp dockerscripts/docker-entrypoint.sh ${BIN_DIR}/docker-entrypoint.sh
+	docker buildx build --platform=${PLATFORM} --push -t ${IMAGE_REGISTRY}/kubegems/s3-gateway:v0.0.1 -f Dockerfile ${BIN_DIR}

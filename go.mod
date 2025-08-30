@@ -339,3 +339,5 @@ replace xorm.io/xorm v1.0.7 => gitea.com/davies/xorm v1.0.8-0.20220528043536-552
 replace maze.io/x/duration v0.0.0-20160924141736-faac084b6075 => github.com/juicedata/duration v0.0.0-20220916024255-e5d060e609c4
 
 replace github.com/huaweicloud/huaweicloud-sdk-go-obs v3.21.12+incompatible => github.com/juicedata/huaweicloud-sdk-go-obs v3.22.12-0.20230228031208-386e87b5c091+incompatible
+
+replace github.com/juicedata/minio => github.com/juicedata/minio v0.0.0-20250521024844-83f97dc3167c

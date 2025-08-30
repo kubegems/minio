@@ -533,6 +533,10 @@ func (a *azureObjects) GetMetrics(ctx context.Context) (*minio.BackendMetrics, e
 	return a.metrics, nil
 }
 
+func (a *azureObjects) GetBucketUsage() map[string]minio.BucketUsageInfo {
+	return nil
+}
+
 // Shutdown - save any gateway metadata to disk
 // if necessary and reload upon next restart.
 func (a *azureObjects) Shutdown(ctx context.Context) error {

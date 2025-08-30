@@ -29,6 +29,7 @@ const (
 	S3BackendGateway    = "s3"
 	JuiceFSGateway      = "juicefs"
 	CephFSGateway       = "cephfs"
+	FuseGateway         = "fuse"
 )
 
 // Gateway represents a gateway backend.

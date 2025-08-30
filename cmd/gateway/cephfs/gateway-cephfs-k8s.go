@@ -2,6 +2,7 @@ package cephfs
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"math/rand"
 	"os"
@@ -9,7 +10,6 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"syscall"
 	"time"
 
@@ -95,7 +95,7 @@ func newClient(configPath string) (*k8sClient, error) {
 }
 
 type s3bucketCollector struct {
-	dm *dataUsageCacheMetrics
+	api minio.ObjectLayer
 }
 
 func (s *s3bucketCollector) Describe(ch chan<- *prometheus.Desc) {
@@ -113,7 +113,7 @@ func (s *s3bucketCollector) Collect(ch chan<- prometheus.Metric) {
 	for k, v := range rts {
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("s3_request_count", "Total number of requests to S3", []string{"bucket"}, nil), prometheus.CounterValue, float64(v), k)
 	}
-	for k, v := range s.dm.getBucketUsage() {
+	for k, v := range s.api.GetBucketUsage() {
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_bytes", "Total S3 storage bytes", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.Size), k)
 		ch <- prometheus.MustNewConstMetric(prometheus.NewDesc("total_files", "Total S3 storage files", []string{"bucket"}, nil), prometheus.GaugeValue, float64(v.ObjectsCount), k)
 	}
@@ -126,23 +126,16 @@ func (c *cephfsObjects) Scanner(ctx context.Context) {
 		bucketUsage := make(chan bucketUsageInfo, 10)
 		go func() {
 			for usage := range bucketUsage {
-				c.usageCache.updateBucketUsage(usage)
+				c.updateBucketUsage(usage)
 			}
 		}()
 		if err := c.scannerUsage(ctx, bucketUsage); err != nil {
 			logger.LogIf(ctx, err)
 		}
-		time.Sleep(time.Duration(10+r.Intn(10)) * time.Second)
+		time.Sleep(time.Duration(20+r.Intn(5)) * time.Second)
 	}
 }
 
-type bucketUsageInfo struct {
-	bucketName string
-	minio.BucketUsageInfo
-}
-
-// TODO
-// TODO - fix scanner object count and size has wrong data
 func (c *cephfsObjects) scannerUsage(ctx context.Context, ch chan<- bucketUsageInfo) error {
 	defer close(ch)
 	buckets, err := c.ListBuckets(ctx)
@@ -151,19 +144,32 @@ func (c *cephfsObjects) scannerUsage(ctx context.Context, ch chan<- bucketUsageI
 	}
 	fsPath := c.ObjectLayer.(*minio.FSObjects).GetFSPath()
 	for _, b := range buckets {
+		bu := bucketUsageInfo{
+			bucketName: b.Name,
+		}
 		bucketPath := path.Join(fsPath, b.Name)
-		bu := bucketUsageInfo{bucketName: b.Name}
-		err := filepath.WalkDir(bucketPath, func(path string, d fs.DirEntry, err error) error {
+		realPath, err := os.Readlink(bucketPath)
+		if err != nil {
+			fmt.Println("Readlink error:", err)
+			continue
+		}
+		err = filepath.WalkDir(realPath, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				return err
+				// 处理访问错误，跳过继续
+				fmt.Printf("Warning: Error accessing %s: %v\n", path, err)
+				return nil
 			}
-			if !d.IsDir() {
-				info, err := d.Info()
-				if err != nil {
-					return err
-				}
-				bu.Size += uint64(info.Size())
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			if info.IsDir() && (info.Name() == "." || info.Name() == "..") {
+				return filepath.SkipDir
+			}
+			// 只统计普通文件，跳过目录
+			if !info.IsDir() {
 				bu.ObjectsCount += 1
+				bu.Size += uint64(info.Size())
 			}
 			return nil
 		})
@@ -171,72 +177,8 @@ func (c *cephfsObjects) scannerUsage(ctx context.Context, ch chan<- bucketUsageI
 			logger.Error("run filepath.WalkDir error:", err)
 			continue
 		}
+		fmt.Println("bucketUsageInfo:", bu)
 		ch <- bu
-
 	}
 	return nil
 }
-
-type dataUsageCacheMetrics struct {
-	sync.RWMutex
-	usage map[string]minio.BucketUsageInfo
-}
-
-func (d *dataUsageCacheMetrics) updateBucketUsage(bi bucketUsageInfo) {
-	d.Lock()
-	defer d.Unlock()
-	d.usage[bi.bucketName] = bi.BucketUsageInfo
-}
-
-func (d *dataUsageCacheMetrics) getBucketUsage() map[string]minio.BucketUsageInfo {
-	d.RLock()
-	defer d.RUnlock()
-	ret := make(map[string]minio.BucketUsageInfo, len(d.usage))
-	for k, v := range d.usage {
-		ret[k] = v
-	}
-	return ret
-}
-
-// func (k *k8sClient) executeInContainer(podName, namespace, containerName string, cmd []string) (stdout string, stderr string, err error) {
-// 	klog.V(6).Infof("Execute command %v in container %s in pod %s in namespace %s", cmd, containerName, podName, namespace)
-// 	const tty = false
-
-// 	req := k.CoreV1().RESTClient().Post().
-// 		Resource("pods").
-// 		Name(podName).
-// 		Namespace(namespace).
-// 		SubResource("exec").
-// 		Param("container", containerName)
-// 	req.VersionedParams(&corev1.PodExecOptions{
-// 		Container: containerName,
-// 		Command:   cmd,
-// 		Stdin:     false,
-// 		Stdout:    true,
-// 		Stderr:    true,
-// 		TTY:       tty,
-// 	}, scheme.ParameterCodec)
-
-// 	var sout, serr bytes.Buffer
-// 	config, err := rest.InClusterConfig()
-// 	if err != nil {
-// 		return "", "", err
-// 	}
-// 	config.Timeout = timeout
-// 	err = execute("POST", req.URL(), config, nil, &sout, &serr, tty)
-
-// 	return strings.TrimSpace(sout.String()), strings.TrimSpace(serr.String()), err
-// }
-
-// func execute(method string, url *url.URL, config *restclient.Config, stdin io.Reader, stdout, stderr io.Writer, tty bool) error {
-// 	exec, err := remotecommand.NewSPDYExecutor(config, method, url)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	return exec.Stream(remotecommand.StreamOptions{
-// 		Stdin:  stdin,
-// 		Stdout: stdout,
-// 		Stderr: stderr,
-// 		Tty:    tty,
-// 	})
-// }
